@@ -1,0 +1,4 @@
+*.o
+cas2wav
+casdir
+wav2cas

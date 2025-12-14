@@ -52,10 +52,12 @@ typedef struct {
   FILE *file;
   unsigned char buffer[WRITE_BUFFER_SIZE];
   size_t position;
+  int baudrate;
+  int output_frequency;
 } WriteBuffer;
 
 /* Buffered write operations */
-void initWriteBuffer(WriteBuffer *wb, FILE *file);
+void initWriteBuffer(WriteBuffer *wb, FILE *file, int baudrate, int output_frequency);
 void flushWriteBuffer(WriteBuffer *wb);
 void putByte(WriteBuffer *wb, unsigned char byte);
 
@@ -97,29 +99,29 @@ typedef struct
  * Outputs DC offset (value 128) for the specified number of samples.
  * Allows tape mechanical settling between blocks.
  *
- * @param wb      Write buffer context
- * @param s       Number of silence samples to write (in 8-bit bytes)
+ * @param wb           Write buffer context
+ * @param sample_count Number of silence samples to write (in 8-bit bytes)
  */
-void writeSilence(WriteBuffer *wb, uint32_t s);
+void writeSilence(WriteBuffer *wb, uint32_t sample_count);
 
 /**
  * Write a single FSK modulated pulse (one complete sine wave cycle).
  * Generates a sine wave at the specified frequency.
  *
  * @param wb      Write buffer context
- * @param f       Frequency in Hz (LONG_PULSE=1200 Hz or SHORT_PULSE=2400 Hz)
+ * @param freq    Frequency in Hz (LONG_PULSE=1200 Hz or SHORT_PULSE=2400 Hz)
  */
-void writePulse(WriteBuffer *wb, uint32_t f);
+void writePulse(WriteBuffer *wb, uint32_t freq);
 
 /**
  * Write a synchronization header signal.
  * Generates continuous short pulses (2400 Hz) to allow MSX BIOS to sync
  * to the incoming bit stream.
  *
- * @param wb      Write buffer context
- * @param s       Number of short pulses at 1200 baud rate
+ * @param wb          Write buffer context
+ * @param pulse_count Number of short pulses at 1200 baud rate
  */
-void writeSync(WriteBuffer *wb, uint32_t s);
+void writeSync(WriteBuffer *wb, uint32_t pulse_count);
 
 /**
  * Encode and transmit a single byte using FSK serial framing.
