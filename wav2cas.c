@@ -25,31 +25,13 @@
 #include <stdint.h>
 #include <string.h>
 #include <memory.h>
+#include "caslib.h"
 
-#ifndef bool
-#define true   1
-#define false  0
-#define bool   int
-#endif
+/* Detection thresholds for signal processing */
+#define THRESHOLD_SILENCE   100  /* Min consecutive samples to detect silence */
+#define THRESHOLD_HEADER    25   /* Min pulses to detect sync header */
 
-#define THRESHOLD_SILENCE   100
-#define THRESHOLD_HEADER    25
-
-/* CPU type defines */
-#if (BIGENDIAN)
-#define BIGENDIANSHORT(value)  ( ((value & 0x00FF) << 8) | \
-                                 ((value & 0xFF00) >>8 ) )
-#define BIGENDIANINT(value)    ( ((value & 0x000000FF) << 24) | \
-                                 ((value & 0x0000FF00) << 8)  | \
-                                 ((value & 0x00FF0000) >> 8)  | \
-                                 ((value & 0xFF000000) >> 24) )
-#define	BIGENDIANLONG(value)   BIGENDIANINT(value) // I suppose Long=int
-#else
-#define BIGENDIANSHORT(value) value
-#define BIGENDIANINT(value)   value
-#define	BIGENDIANLONG(value)  value
-#endif
-
+/* Command-line configurable parameters */
 /* default arguments */
 int   threshold = 5;     /* amplitude threshold  */
 bool  envelope  = 2;     /* envelope correction  */
@@ -57,35 +39,25 @@ bool  normalize = false; /* amplitude normalize  */
 bool  phase     = true;  /* phase shift */
 float window    = 1.5;   /* window factor */
 
-/* header definitions of a wav file */
-typedef struct
-{
-  char     RiffID[4];
-  uint32_t RiffSize;
-  char     WaveID[4];
-  char     FmtID[4];
-  uint32_t FmtSize;
-  uint16_t wFormatTag;
-  uint16_t nChannels;
-  uint32_t nSamplesPerSec;
-  uint32_t nAvgBytesPerSec;
-  uint16_t nBlockAlign;
-  uint16_t wBitsPerSample;
-} WAVE_HEADER;
-
-typedef struct
-{
-  char     DataID[4];
-  uint32_t nDataBytes;
-} WAVE_BLOCK;
-
-
-
-/* Read wav file for tape image */
+/* Read WAV file and convert to 8-bit mono signed PCM buffer
+ * Returns: sample rate (Hz) on success, -1 on error */
 int tapeRead(char* szFileName, int8_t** pBuffer, int32_t *size)
 {
   FILE* wav_file;
-  WAVE_HEADER header;
+  /* Note: Using only RIFF header fields, not including data chunk */
+  struct {
+    char     RiffID[4];
+    uint32_t RiffSize;
+    char     WaveID[4];
+    char     FmtID[4];
+    uint32_t FmtSize;
+    uint16_t wFormatTag;
+    uint16_t nChannels;
+    uint32_t nSamplesPerSec;
+    uint32_t nAvgBytesPerSec;
+    uint16_t nBlockAlign;
+    uint16_t wBitsPerSample;
+  } header;
   WAVE_BLOCK  block;
 
   int  adder;
@@ -97,27 +69,15 @@ int tapeRead(char* szFileName, int8_t** pBuffer, int32_t *size)
 
   fread(&header,sizeof(header),1,wav_file);
 
-  /* Make header compatible with PPC micro */
-  #if (BIGENDIAN)
-  header.RiffSize       = BIGENDIANLONG(header.RiffSize);
-  header.FmtSize        = BIGENDIANLONG(header.FmtSize);
-  header.nSamplesPerSec = BIGENDIANLONG(header.nSamplesPerSec);
-  header.nAvgBytesPerSec= BIGENDIANLONG(header.nAvgBytesPerSec);
-  header.wFormatTag     = BIGENDIANSHORT(header.wFormatTag);
-  header.nChannels      = BIGENDIANSHORT(header.nChannels);
-  header.nBlockAlign    = BIGENDIANSHORT(header.nBlockAlign);
-  header.wBitsPerSample = BIGENDIANSHORT(header.wBitsPerSample);
-  #endif
-
-  /* Determine how many bytes to skip in reading file for 8-bit mono */
+  /* Calculate bytes per sample frame (channels × bytes/sample) */
   adder=header.nChannels*(header.wBitsPerSample/8);
 
-  /* Search for data tag */
+  /* Search for "data" chunk (may not be at fixed position in some WAV files) */
   found = false;
   pos = ftell(wav_file);
   while(fread(&block,sizeof(block),1,wav_file))
     if (!strncmp(block.DataID,"data",4)) {
-      *size=BIGENDIANLONG(block.nDataBytes)/adder ;
+      *size=block.nDataBytes/adder ;
       *pBuffer=(int8_t*)malloc(*size*sizeof(int8_t));
       found = true;
       break;
@@ -143,13 +103,13 @@ int tapeRead(char* szFileName, int8_t** pBuffer, int32_t *size)
 	 (int)header.wBitsPerSample,
 	 header.nChannels==1 ? "mono" : "stereo" );
 
-  /* Read file */
+  /* Read audio samples and convert to 8-bit signed mono */
   for (i=0;i<(*size);i++) {
 
-    for (j=1; j<adder; j++) fread(&data,sizeof(int8_t),1,wav_file);
-    fread(&data,sizeof(int8_t),1,wav_file);
-    if (header.wBitsPerSample==8) data^=128;
-    if (phase) data=-data;
+    for (j=1; j<adder; j++) fread(&data,sizeof(int8_t),1,wav_file);  /* Skip extra channels/bytes */
+    fread(&data,sizeof(int8_t),1,wav_file);  /* Read one sample */
+    if (header.wBitsPerSample==8) data^=128;  /* Convert unsigned to signed */
+    if (phase) data=-data;  /* Apply phase shift if enabled */
     (*pBuffer)[i]=data;
   }
 
@@ -157,9 +117,7 @@ int tapeRead(char* szFileName, int8_t** pBuffer, int32_t *size)
   return header.nSamplesPerSec;
 }
 
-
-
-/* correct envelope and denoise signal */
+/* Apply envelope correction using weighted moving average to reduce noise */
 void correctEnvelope(int8_t **buffer,int32_t size)
 {
   int32_t i;
@@ -170,21 +128,19 @@ void correctEnvelope(int8_t **buffer,int32_t size)
 		     2.0*(*buffer)[i+1]   ) / 3.5;
 }
 
-
-
-/* make signal as loud as possible */
+/* Normalize amplitude to maximize signal level (scale to ±127) */
 void normalizeAmplitude(int8_t **buffer,int32_t size)
 {
   int32_t i;
   int  maximum=0;
+  /* Find peak amplitude */
   for (i=0;i<size;i++)
     if (abs((*buffer)[i])>maximum) maximum=abs((*buffer)[i]);
+  /* Scale all samples to use full dynamic range */
   for (i=0;i<size;i++) (*buffer)[i]*=127/(float)maximum;
 }
 
-
-
-/* detect silence */
+/* Check if audio is silent starting at index (below threshold for THRESHOLD_SILENCE samples) */
 bool isSilence(int8_t *buffer,int32_t index,int32_t size)
 {
   int32_t silent=0;
@@ -200,9 +156,7 @@ bool isSilence(int8_t *buffer,int32_t index,int32_t size)
   return true;
 }
 
-
-
-/* skip silent parts */
+/* Advance index past silent samples (below threshold) */
 void skipSilence(int8_t *buffer, int32_t *index, int32_t size)
 {
   while(*index<size &&
@@ -210,21 +164,19 @@ void skipSilence(int8_t *buffer, int32_t *index, int32_t size)
 	 buffer[*index] >= -threshold )) (*index)++;
 }
 
-
-
-/* get the number of bytes of one pulse */
+/* Measure pulse width in samples by detecting zero-crossing */
 int32_t getPulseWidth(int8_t *buffer, int32_t *index, int32_t size)
 {
-  int min = 1000;
-  int max =-1000;
-  int pt  = max;
+  int min = 1000;   /* Track minimum amplitude */
+  int max =-1000;   /* Track maximum amplitude */
+  int pt  = max;    /* Peak tracking */
 
   int prev = *index > 0 ? buffer[(*index)-1] : 0;
 
   int32_t width = 0;
   for(;*index<size;width++) {
 
-    /* ascending */
+    /* Signal ascending */
     if (buffer[*index]>prev) {
 
       if (prev==min) {
@@ -246,8 +198,7 @@ int32_t getPulseWidth(int8_t *buffer, int32_t *index, int32_t size)
       if (buffer[*index]>max) max=buffer[*index];
     }
 
-
-    /* descending */
+    /* Signal descending */
     if (buffer[*index]<prev) {
 
       if (prev==max) {
@@ -265,9 +216,7 @@ int32_t getPulseWidth(int8_t *buffer, int32_t *index, int32_t size)
   return width;
 }
 
-
-
-/* detect headers */
+/* Detect sync header by finding THRESHOLD_HEADER pulses of similar width */
 bool isHeader(int8_t *buffer, int32_t index, int32_t size)
 {
 
@@ -292,9 +241,7 @@ bool isHeader(int8_t *buffer, int32_t index, int32_t size)
   return false;
 }
 
-
-
-/* skip header and return average with of a short pulse */
+/* Skip sync header and return average pulse width (for bit detection) */
 float skipHeader(int8_t *buffer, int32_t *index, int32_t size)
 {
 
@@ -322,9 +269,8 @@ float skipHeader(int8_t *buffer, int32_t *index, int32_t size)
   return average;
 }
 
-
-
-/* read a byte from wave data */
+/* Decode one byte from FSK audio: 1 start + 8 data (LSB first) + 2 stop bits
+ * Returns: byte value (0-255) on success, -1 on error */
 int readByte(int8_t *buffer, int32_t *index, int32_t size, float average)
 {
   int  bit;
@@ -332,17 +278,18 @@ int readByte(int8_t *buffer, int32_t *index, int32_t size, float average)
   int  value = 0;
   int  i;
 
-  /* start bit (int32_t pulse) */
+  /* Read start bit (should be long pulse) */
   width=getPulseWidth(buffer,index,size);
   if (isSilence(buffer,*index,size) ||
       width<average*window) return -1;
 
-  /* data bits (lsb first) */
+  /* Read 8 data bits (LSB first): short pulse = 1, long pulse = 0 */
   for (bit=0;bit<8;bit++) {
 
     width=getPulseWidth(buffer,index,size);
     if (isSilence(buffer,*index,size)) return -1;
 
+    /* Short pulse indicates bit = 1 */
     if (width<average*window) {
 
       value+=(1<<bit);
@@ -351,7 +298,7 @@ int readByte(int8_t *buffer, int32_t *index, int32_t size, float average)
     }
   }
 
-  /* two stop bits (four short pulses) */
+  /* Read two stop bits (four short pulses total) */
   for (i=0;i<3;i++) {
 
     getPulseWidth(buffer,index,size);
@@ -362,9 +309,7 @@ int readByte(int8_t *buffer, int32_t *index, int32_t size, float average)
   return value;
 }
 
-
-
-/* show a brief description */
+/* Display usage information and command-line options */
 void showUsage(char *progname)
 {
   printf("usage: %s [-np] [-t threshold] [-w window] [-e envelope] <ifile> <ofile>\n"
@@ -381,16 +326,16 @@ void showUsage(char *progname)
 int main(int argc, char* argv[])
 {
   FILE *output;
-  int8_t *buffer;
+  int8_t *buffer;      /* Audio sample buffer */
   int32_t frequency,size,index,written;
-  float average;
+  float average;       /* Average pulse width */
   int   data,i,j;
-  bool  header;
+  bool  header;        /* Track if CAS header has been written */
 
-  char  *ifile = NULL;
-  char  *ofile = NULL;
+  char  *ifile = NULL;  /* Input WAV filename */
+  char  *ofile = NULL;  /* Output CAS filename */
 
-  /* parse command line options */
+  /* Parse command line options */
   for (i=1; i<argc; i++) {
 
     if (argv[i][0]=='-') {
@@ -437,38 +382,37 @@ int main(int argc, char* argv[])
     exit(1);
   }
 
-  /* work on signal first */
+  /* Apply signal processing */
   if (normalize) normalizeAmplitude(&buffer,size);
   for(i=0;i<envelope;i++) correctEnvelope(&buffer,size);
 
-  /* let's do it */
   printf("Decoding audio data...\n");
 
-  /* sample probably starts with some silence before the data, skip it */
+  /* Skip initial silence */
   written=index=0;
   skipSilence(buffer,&index,size);
 
   header=false;
-  /* loop through all audio data and extract the contents */
+  /* Loop through audio data and extract contents */
   for (;index<size;index++) {
 
-    /* detect silent parts and skip them */
+    /* Detect and skip silent parts */
     if (isSilence(buffer,index,size)) {
 
       printf("[%.1f] skipping silence\n",(double)index/frequency);
       skipSilence(buffer,&index,size);
     }
 
-    /* detect header and proces the data block followed */
+    /* Detect header and process the data block that follows */
     if (isHeader(buffer,index,size)) {
 
       printf("[%.1f] header detected\n",(double)index/frequency);
       average=skipHeader(buffer,&index,size);
 
-      /* write .cas header if none already written */
+      /* Write CAS header if not already written */
       if (!header) {
 
-	/* .cas headers always start at fixed positions */
+	/* CAS headers must be 8-byte aligned */
 	for (;written&7;written++) putc(0x00,output);
 
 	/* write a .cas header */
@@ -490,7 +434,7 @@ int main(int argc, char* argv[])
 
     } else {
 
-      /* data found without a header, skip it */
+      /* Data found without header - skip it */
       printf("[%.1f] skipping headerless data\n",(double)index/frequency);
       while(!isSilence(buffer,index,size) && index<size ) index++;
     }

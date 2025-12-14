@@ -22,38 +22,37 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <memory.h>
+#include "caslib.h"
 
-char HEADER[8] = { 0x1F,0xA6,0xDE,0xBA,0xCC,0x13,0x7D,0x74 };
-char ASCII[10] = { 0xEA,0xEA,0xEA,0xEA,0xEA,0xEA,0xEA,0xEA,0xEA,0xEA };
-char BIN[10]   = { 0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0 };
-char BASIC[10] = { 0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3 };
-
+/* State machine for tracking expected next block type */
 enum next {
-  NEXT_NONE,
-  NEXT_ASCII,
-  NEXT_BINARY,
-  NEXT_DATA
+  NEXT_NONE,    /* No specific block expected */
+  NEXT_ASCII,   /* Expecting ASCII data continuation */
+  NEXT_BINARY,  /* Expecting binary header info */
+  NEXT_DATA     /* Expecting BASIC data */
 };
 
 int main(int argc, char* argv[])
 {
   FILE *ifile;
+  /* Union allows reading data as bytes or interpreting as binary header */
   union {
     uint8_t data[10];
     struct binary_header_t {
-      uint16_t start, stop, exec;
+      uint16_t start, stop, exec;  /* Binary: start addr, end addr, exec addr */
     } binary_header;
   } buffer;
-  char filename[6];
-  long position;
-  int  next = NEXT_NONE;
+  char filename[6];  /* MSX filenames are 6 characters */
+  long position;     /* Current file position */
+  int  next = NEXT_NONE;  /* Expected next block type */
 
   if (argc != 2) {
-    
+
     printf("usage: %s <ifile>\n",argv[0]);
     exit(0);
   }
-  
+
+  /* Open CAS file for reading */
   if ( (ifile = fopen(argv[1],"rb")) == NULL) {
 
     fprintf(stderr,"%s: failed opening %s\n",argv[0],argv[1]);
@@ -61,37 +60,43 @@ int main(int argc, char* argv[])
   }
 
   position=0;
+  /* Scan file in 8-byte chunks looking for HEADER markers */
   while (fread(&buffer,1,8,ifile)==8) {
-    
+
     position += 8;
 
+    /* Found a HEADER marker - process based on state machine */
     if (!memcmp(&buffer,HEADER,8)) {
-      
+
       switch (next) {
 
 	case NEXT_NONE:
 	default:
           if (fread(&buffer,1,10,ifile)==10) {
+	    /* ASCII file: read filename and print */
 	    if (!memcmp(&buffer,ASCII,10)) {
-	      
+
 	      fread(filename,1,6,ifile); next=NEXT_ASCII;
 	      printf("%.6s  ascii\n",filename);
 	      position += 16;
-	    } 
-      
+	    }
+
+	    /* Binary file: store filename, wait for header block */
 	    else if (!memcmp(&buffer,BIN,10)) {
-	      
+
 	      fread(filename,1,6,ifile); next=NEXT_BINARY;
 	      position += 16;
 	    }
 
+	    /* BASIC program: read filename and print */
 	    else if (!memcmp(&buffer,BASIC,10)) {
-	      
+
 	      fread(filename,1,6,ifile); next=NEXT_DATA;
 	      printf("%.6s  basic\n", filename);
 	      position += 16;
 	    }
-      
+
+	    /* Unknown/custom file type */
 	    else {
 
 	      printf("------  custom  %.6x\n",(int)position);
@@ -101,6 +106,7 @@ int main(int argc, char* argv[])
 	  }
 	  break;
 
+	/* Skip ASCII data blocks until EOF marker (0x1A) found */
 	case NEXT_ASCII:
 	  while (fread(&buffer,1,8,ifile) == 8 &&
 	         memchr(&buffer, 0x1a, 8) == NULL)
@@ -110,8 +116,10 @@ int main(int argc, char* argv[])
 	  next = NEXT_NONE;
 	  break;
 
+	/* Binary file: read and display header info (start, end, exec addresses) */
 	case NEXT_BINARY:
 	  if (fread(&buffer,1,8,ifile)==8) {
+	    /* If no exec address specified, default to start address */
 	    if (!buffer.binary_header.exec)
 	       buffer.binary_header.exec=buffer.binary_header.start;
 
@@ -130,9 +138,9 @@ int main(int argc, char* argv[])
       }
     }
   }
-    
+
   fclose(ifile);
- 
+
   return 0;
 }
 

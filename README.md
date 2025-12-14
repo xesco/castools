@@ -14,10 +14,10 @@ further in this document.
 The wav2cas tool requires a .wav file as input. It will analyse the signal and
 create a .cas file. It will work on 'copy-protected' tapes which use their own
 custom loader using the bios routines for the actual retrieval of data.
-Unfortunately tapes exist which don't use the bios routines (e.g. a lot of 
-Gremlin games used a entirely different format). These will not work. 
+Unfortunately tapes exist which don't use the bios routines (e.g. a lot of
+Gremlin games used a entirely different format). These will not work.
 Fortunately, a lot of publishers did use the bios calls, and they should work
-fine. 
+fine.
 
 However, keep in mind that the tape medium was not the most reliable medium to
 store data on; remember cleaning your heads, tuning your heads and playing with
@@ -27,7 +27,7 @@ results, but if the signal is too much deteriorated it will probably fail.
 You get the best results by sampling the tapes at the highest sample frequency
 as possible. It does not matter if the sample is 16 or 8 bits; if it is 16 bits
 it will be converted to 8 bits. Sample the signal as loud as possible, but make
-sure the signal does not clip!. 
+sure the signal does not clip!.
 
 The wav2cas tool has 4 arguments to play with, but the default settings should
 work fine if it is a clean clear signal.  The -t argument requires an integer
@@ -58,7 +58,7 @@ Credits go to Ramones for the applied changes, thanks!
 #### 1.1 (2002/06/09)
 * cas2wav: increased gap between data and headers
 * wav2cas: fixed bug in wav reading
-* wav2cas: changed default phase 
+* wav2cas: changed default phase
 
 #### 1.0 (2001/12/03)
 * first public release

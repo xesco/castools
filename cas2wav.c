@@ -25,182 +25,35 @@
 #include <stdint.h>
 #include <memory.h>
 #include <math.h>
+#include "caslib.h"
 
-#ifndef bool
-#define true   1
-#define false  0
-#define bool   int
-#endif
 
-/* CPU type defines */
-#if (BIGENDIAN)
-#define BIGENDIANSHORT(value)  ( ((value & 0x00FF) << 8) | \
-                                 ((value & 0xFF00) >>8 ) )
-#define BIGENDIANINT(value)    ( ((value & 0x000000FF) << 24) | \
-                                 ((value & 0x0000FF00) << 8)  | \
-                                 ((value & 0x00FF0000) >> 8)  | \
-                                 ((value & 0xFF000000) >> 24) )
-#define	BIGENDIANLONG(value)   BIGENDIANINT(value) // I suppose Long=int
-#else
-#define BIGENDIANSHORT(value) value
-#define BIGENDIANINT(value)   value
-#define	BIGENDIANLONG(value)  value
-#endif
-
-/* number of ouput bytes for silent parts */
-#define SHORT_SILENCE     OUTPUT_FREQUENCY    /* 1 second  */
-#define LONG_SILENCE      OUTPUT_FREQUENCY*2  /* 2 seconds */
-
-/* frequency for pulses */
-#define LONG_PULSE        1200
-#define SHORT_PULSE       2400
-
-/* number of uint16_t pulses for headers */
-#define LONG_HEADER       16000
-#define SHORT_HEADER      4000
-
-/* output settings */
-#define OUTPUT_FREQUENCY  43200
-
-/* default output baudrate */
-int BAUDRATE = 1200;
-
-/* headers definitions */
-char HEADER[8] = { 0x1F,0xA6,0xDE,0xBA,0xCC,0x13,0x7D,0x74 };
-char ASCII[10] = { 0xEA,0xEA,0xEA,0xEA,0xEA,0xEA,0xEA,0xEA,0xEA,0xEA };
-char BIN[10]   = { 0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0 };
-char BASIC[10] = { 0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3 };
-
-/* definitions for .wav file */
-#define PCM_WAVE_FORMAT   1
-#define MONO              1
-#define STEREO            2
-
-typedef struct
-{
-  char      RiffID[4];
-  uint32_t  RiffSize;
-  char      WaveID[4];
-  char      FmtID[4];
-  uint32_t  FmtSize;
-  uint16_t  wFormatTag;
-  uint16_t  nChannels;
-  uint32_t  nSamplesPerSec;
-  uint32_t  nAvgBytesPerSec;
-  uint16_t  nBlockAlign;
-  uint16_t  wBitsPerSample;
-  char      DataID[4];
-  uint32_t  nDataBytes;
-} WAVE_HEADER;
-
+/* Preset WAV header template (sizes updated at program end with actual data size) */
 WAVE_HEADER waveheader =
 {
   { "RIFF" },
-  BIGENDIANLONG(0),
+  0,                    /* Will be set to actual file size - 8 */
   { "WAVE" },
   { "fmt " },
-  BIGENDIANLONG(16),
-  BIGENDIANSHORT(PCM_WAVE_FORMAT),
-  BIGENDIANSHORT(MONO),
-  BIGENDIANLONG(OUTPUT_FREQUENCY),
-  BIGENDIANLONG(OUTPUT_FREQUENCY),
-  BIGENDIANSHORT(1),
-  BIGENDIANSHORT(8),
+  16,                   /* Format chunk size (16 bytes for PCM) */
+  PCM_WAVE_FORMAT,      /* PCM format identifier */
+  MONO,                 /* Single channel audio */
+  OUTPUT_FREQUENCY,     /* 43200 Hz sample rate */
+  OUTPUT_FREQUENCY,     /* Bytes per second = sample rate for 8-bit mono */
+  1,                    /* Block alignment (1 byte per sample for 8-bit mono) */
+  8,                    /* 8 bits per sample */
   { "data" },
-  BIGENDIANLONG(0)
+  0                     /* Will be set to actual audio data size */
 };
 
-
-
-/* write a pulse */
-void writePulse(FILE *output,uint32_t f)
-{
-  uint32_t n;
-  double length = OUTPUT_FREQUENCY/(BAUDRATE*(f/1200));
-  double scale  = 2.0*M_PI/(double)length;
-
-  for (n=0;n<(uint32_t)length;n++)
-    putc( (char)(sin((double)n*scale)*127)^128, output);
-}
-
-
-
-/* write a header signal */
-void writeHeader(FILE *output,uint32_t s)
-{
-  int  i;
-  for (i=0;i<s*(BAUDRATE/1200);i++) writePulse(output,SHORT_PULSE);
-}
-
-
-
-/* write silence */
-void writeSilence(FILE *output,uint32_t s)
-{
-  int n;
-  for (n=0;n<s;n++) putc(128,output);
-}
-
-
-
-/* write a byte */
-void writeByte(FILE *output,int byte)
-{
-  int  i;
-
-  /* one start bit */
-  writePulse(output,LONG_PULSE);
-
-  /* eight data bits */
-  for (i=0;i<8;i++) {
-    if (byte&1) {
-      writePulse(output,SHORT_PULSE);
-      writePulse(output,SHORT_PULSE);
-    } else writePulse(output,LONG_PULSE);
-    byte = byte >> 1;
-  }
-
-  /* two stop bits */
-  for (i=0;i<4;i++) writePulse(output,SHORT_PULSE);
-}
-
-
-
-/* write data until a header is detected */
-void writeData(FILE* input,FILE* output,uint32_t *position,bool* eof)
-{
-  int  read;
-  int  i;
-  char buffer[8];
-
-  *eof=false;
-  while ((read=fread(buffer,1,8,input))==8) {
-
-    if (!memcmp(buffer,HEADER,8)) return;
-
-    writeByte(output,buffer[0]);
-    if (buffer[0]==0x1a) *eof=true;
-    fseek(input,++*position,SEEK_SET);
-  }
-
-  for (i=0;i<read;i++) writeByte(output,buffer[i]);
-
-  if (buffer[0]==0x1a) *eof=true;
-  *position+=read;
-
-  return;
-}
-
-
-/* show a brief description */
+/* Display usage information and command-line options */
 void showUsage(char *progname)
 {
   printf("usage: %s [-2] [-s seconds] <ifile> <ofile>\n"
          " -2   use 2400 baud as output baudrate\n"
          " -s   define gap time (in seconds) between blocks (default 2)\n"
-	 ,progname);
+   ,progname);
 }
-
 
 
 int main(int argc, char* argv[])
@@ -208,14 +61,14 @@ int main(int argc, char* argv[])
   FILE *output,*input;
   uint32_t size,position;
   int  i,j;
-  int  stime = -1;
-  bool eof;
+  int  stime = -1;  /* Silence time between blocks (-1 = use default) */
+  bool eof;         /* Set when EOF marker or data block boundary reached */
   char buffer[10];
 
-  char *ifile = NULL;
-  char *ofile = NULL;
+  char *ifile = NULL;  /* Input CAS filename */
+  char *ofile = NULL;  /* Output WAV filename */
 
-  /* parse command line options */
+  /* Parse command line options */
   for (i=1; i<argc; i++) {
 
     if (argv[i][0]=='-') {
@@ -224,8 +77,8 @@ int main(int argc, char* argv[])
 
         switch(argv[i][j]) {
 
-        case '2': BAUDRATE=2400; break;
-        case 's': stime=atof(argv[++i]); j=-1; break;
+        case '2': BAUDRATE=2400; break;      /* Use 2400 baud instead of 1200 */
+        case 's': stime=atof(argv[++i]); j=-1; break;  /* Custom silence duration */
 
         default:
           fprintf(stderr,"%s: invalid option\n",argv[0]);
@@ -235,16 +88,19 @@ int main(int argc, char* argv[])
       continue;
     }
 
+    /* Collect input and output filenames from positional arguments */
     if (ifile==NULL) { ifile=argv[i]; continue; }
     if (ofile==NULL) { ofile=argv[i]; continue; }
 
+    /* Too many arguments */
     fprintf(stderr,"%s: invalid option\n",argv[0]);
     exit(1);
   }
 
+  /* Validate we have both input and output filenames */
   if (ifile==NULL || ofile==NULL) { showUsage(argv[0]); exit(1); }
 
-  /* open input/output files */
+  /* Open input and output files */
   if ((input=fopen(ifile,"rb"))==NULL) {
     fprintf(stderr,"%s: failed opening %s\n",argv[0],argv[1]);
     exit(1);
@@ -255,72 +111,77 @@ int main(int argc, char* argv[])
     exit(1);
   }
 
-  /* write initial .wav header */
+  /* Write initial WAV header (size fields will be updated at end) */
   fwrite(&waveheader,sizeof(waveheader),1,output);
 
   position=0;
-  /* search for a header in the .cas file */
+  /* Scan CAS file for HEADER markers (8-byte sync pattern) */
   while (fread(buffer,1,8,input)==8) {
 
     if (!memcmp(buffer,HEADER,8)) {
+      /* Header found - read the 10-byte file type identifier */
 
-      /* it probably works fine if a long header is used for every */
-      /* header but since the msx bios makes a distinction between */
-      /* them, we do also (hence a lot of code).                   */
+      /* The MSX BIOS makes a distinction between SYNC_INITIAL (initial sync)
+         and SYNC_BLOCK (inter-block sync). Using appropriate headers for each
+         type improves compatibility with real hardware tape loaders. */
 
       position+=8;
       if (fread(buffer,1,10,input) == 10) {
 
-	if (!memcmp(buffer,ASCII,10)) {
+        /* ASCII file type: multiple data blocks with headers between them */
+        if (!memcmp(buffer,ASCII,10)) {
 
-	  fseek(input,position,SEEK_SET);
-	  writeSilence(output,stime>0?OUTPUT_FREQUENCY*stime:LONG_SILENCE);
-	  writeHeader(output,LONG_HEADER);
-	  writeData(input,output,&position,&eof);
+          fseek(input,position,SEEK_SET);
+          writeSilence(output,stime>0?OUTPUT_FREQUENCY*stime:LONG_SILENCE);
+          writeSync(output,SYNC_INITIAL);
+          writeData(input,output,&position,&eof);
 
-	  do {
+          /* Process subsequent data blocks until EOF or no more data */
+          do {
 
-	    position+=8; fseek(input,position,SEEK_SET);
-	    writeSilence(output,SHORT_SILENCE);
-	    writeHeader(output,SHORT_HEADER);
-	    writeData(input,output,&position,&eof);
+            position+=8; fseek(input,position,SEEK_SET);
+            writeSilence(output,SHORT_SILENCE);
+            writeSync(output,SYNC_BLOCK);
+            writeData(input,output,&position,&eof);
 
-	  } while (!eof && !feof(input));
+          } while (!eof && !feof(input));
 
-	}
-	else if (!memcmp(buffer,BIN,10) || !memcmp(buffer,BASIC,10)) {
+        }
+        /* Binary/BASIC file type: two-block structure (header block + data block) */
+        else if (!memcmp(buffer,BIN,10) || !memcmp(buffer,BASIC,10)) {
 
-	  fseek(input,position,SEEK_SET);
-	  writeSilence(output,stime>0?OUTPUT_FREQUENCY*stime:LONG_SILENCE);
-	  writeHeader(output,LONG_HEADER);
-	  writeData(input,output,&position,&eof);
-	  writeSilence(output,SHORT_SILENCE);
-	  writeHeader(output,SHORT_HEADER);
-	  position+=8; fseek(input,position,SEEK_SET);
-	  writeData(input,output,&position,&eof);
+          fseek(input,position,SEEK_SET);
+          writeSilence(output,stime>0?OUTPUT_FREQUENCY*stime:LONG_SILENCE);
+          writeSync(output,SYNC_INITIAL);
+          writeData(input,output,&position,&eof);
+          writeSilence(output,SHORT_SILENCE);
+          writeSync(output,SYNC_BLOCK);
+          position+=8; fseek(input,position,SEEK_SET);
+          writeData(input,output,&position,&eof);
 
-	} else {
+        }
+        /* Unknown file type - use single block with initial sync */
+        else {
 
-	  printf("unknown file type: using long header\n");
-	  fseek(input,position,SEEK_SET);
-	  writeSilence(output,LONG_SILENCE);
-	  writeHeader(output,LONG_HEADER);
-	  writeData(input,output,&position,&eof);
-	}
+          printf("unknown file type: using long header\n");
+          fseek(input,position,SEEK_SET);
+          writeSilence(output,LONG_SILENCE);
+          writeSync(output,SYNC_INITIAL);
+          writeData(input,output,&position,&eof);
+        }
 
       }
       else {
-
-	printf("unknown file type: using long header\n");
-	fseek(input,position,SEEK_SET);
-	writeSilence(output,stime>0?OUTPUT_FREQUENCY*stime:LONG_SILENCE);
-	writeHeader(output,LONG_HEADER);
-	writeData(input,output,&position,&eof);
+        /* File type identifier read failed; treat as unknown type */
+        printf("unknown file type: using initial sync\n");
+        fseek(input,position,SEEK_SET);
+        writeSilence(output,stime>0?OUTPUT_FREQUENCY*stime:LONG_SILENCE);
+        writeSync(output,SYNC_INITIAL);
+        writeData(input,output,&position,&eof);
       }
 
     } else {
-
-      /* should not occur */
+      /* Non-header data found - skip byte and continue (handles corrupted files) */
       fprintf(stderr,"skipping unhandled data\n");
       position++;
     }
@@ -328,10 +189,12 @@ int main(int argc, char* argv[])
     fseek(input,position,SEEK_SET);
   }
 
-  /* write final .wav header */
+  /* Update WAV header with final audio data size */
   size = ftell(output)-sizeof(waveheader);
-  waveheader.nDataBytes = BIGENDIANLONG(size);
-  waveheader.RiffSize = BIGENDIANLONG(size);
+  waveheader.nDataBytes = size;
+  waveheader.RiffSize = size;
+
+  /* Rewrite header with correct sizes */
   fseek(output,0,SEEK_SET);
   fwrite(&waveheader,sizeof(waveheader),1,output);
 
