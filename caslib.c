@@ -23,12 +23,35 @@ const char BASIC[10]  = { 0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3 };  
 /* Baudrate: 1200 or 2400 baud (configurable via command line) */
 int BAUDRATE = 1200;
 
-/* Write silence samples (DC offset 128) for tape mechanical settling */
-void writeSilence(FILE *output, uint32_t s)
+/* Initialize write buffer context */
+void initWriteBuffer(WriteBuffer *wb, FILE *file)
 {
-  uint32_t n;
-  for (n = 0; n < s; n++)
-    fputc(128, output);
+  wb->file = file;
+  wb->position = 0;
+}
+
+/* Flush buffered data to file */
+void flushWriteBuffer(WriteBuffer *wb)
+{
+  if (wb->position > 0) {
+    fwrite(wb->buffer, 1, wb->position, wb->file);
+    wb->position = 0;
+  }
+}
+
+/* Write a single byte to buffer, flushing when full */
+void putByte(WriteBuffer *wb, unsigned char byte)
+{
+  wb->buffer[wb->position++] = byte;
+  if (wb->position >= WRITE_BUFFER_SIZE)
+    flushWriteBuffer(wb);
+}
+
+/* Write silence samples (DC offset 128) for tape mechanical settling */
+void writeSilence(WriteBuffer *wb, uint32_t s)
+{
+  for (uint32_t n = 0; n < s; n++)
+    putByte(wb, 128);
 }
 
 /* 360-entry sine lookup table (1 cycle @ 1-degree resolution) */
@@ -51,7 +74,7 @@ static void init_sine_table(void)
 }
 
 /* Generate FSK pulse: 0 bit→1200Hz (36 samples), 1 bit→2400Hz (18 samples) */
-void writePulse(FILE *output, uint32_t f)
+void writePulse(WriteBuffer *wb, uint32_t f)
 {
   uint32_t n;
 
@@ -70,33 +93,33 @@ void writePulse(FILE *output, uint32_t f)
     /* Math guarantees table_index < 360, no modulo needed */
     unsigned int table_index = (unsigned int)(n * table_step);
     unsigned char pcm_sample = sine_table[table_index];
-    fputc((int)pcm_sample, output);
+    putByte(wb, pcm_sample);
   }
 }
 
 /* Generate synchronization pulses (SHORT_PULSE tones scaled by BAUDRATE) */
-void writeSync(FILE *output, uint32_t s)
+void writeSync(WriteBuffer *wb, uint32_t s)
 {
   /* Scale pulse count by BAUDRATE/1200 to maintain same duration */
   for (int i = 0; i < (int)(s*(BAUDRATE / 1200.0)); i++)
-    writePulse(output, SHORT_PULSE);
+    writePulse(wb, SHORT_PULSE);
 }
 
 /* Serial encoding: START(0) + 8 bits LSB-first + STOP(1); bit-1→2400Hz, bit-0→1200Hz */
-void writeByte(FILE *output, int byte)
+void writeByte(WriteBuffer *wb, int byte)
 {
   /* START: 0 */
-  writePulse(output, LONG_PULSE);
+  writePulse(wb, LONG_PULSE);
 
   /* DATA: 8 bits LSB-first; bit-1→2×SHORT, bit-0→LONG */
   for (int i = 0; i < 8; i++) {
     if (byte & 1) {
       /* Bit=1: two 2400Hz pulses */
-      writePulse(output, SHORT_PULSE);
-      writePulse(output, SHORT_PULSE);
+      writePulse(wb, SHORT_PULSE);
+      writePulse(wb, SHORT_PULSE);
     } else {
       /* Bit=0: one 1200Hz pulse */
-      writePulse(output, LONG_PULSE);
+      writePulse(wb, LONG_PULSE);
     }
     /* Next bit */
     byte = byte >> 1;
@@ -104,11 +127,11 @@ void writeByte(FILE *output, int byte)
 
   /* STOP: 1 (4×SHORT=2 bits) */
   for (int i = 0; i < 4; i++)
-    writePulse(output, SHORT_PULSE);
+    writePulse(wb, SHORT_PULSE);
 }
 
 /* Transmit data block until HEADER marker or EOF; sets *eof if 0x1A found */
-void writeData(FILE *input, FILE *output, uint32_t *position, bool *eof)
+void writeData(FILE *input, WriteBuffer *wb, uint32_t *position, bool *eof)
 {
   int read;
   int i;
@@ -120,7 +143,7 @@ void writeData(FILE *input, FILE *output, uint32_t *position, bool *eof)
   while ((read = fread(buffer, 1, 8, input)) == 8) {
     if (!memcmp(buffer, HEADER, 8))
       return;  /* Stop at next HEADER */
-    writeByte(output, buffer[0]);
+    writeByte(wb, buffer[0]);
     if (buffer[0] == 0x1a)
       *eof = true;  /* EOF marker */
     fseek(input, ++(*position), SEEK_SET);
@@ -128,7 +151,7 @@ void writeData(FILE *input, FILE *output, uint32_t *position, bool *eof)
 
   /* Transmit remaining bytes from partial read at EOF */
   for (i = 0; i < read; i++)
-    writeByte(output, buffer[i]);
+    writeByte(wb, buffer[i]);
   if (read > 0 && buffer[0] == 0x1a)
     *eof = true;
 

@@ -44,6 +44,21 @@ extern const char BASIC[10];   /* BASIC program */
 /* Baud rate (bits per second) - can be 1200 or 2400 */
 extern int BAUDRATE;
 
+/* Buffered I/O configuration */
+#define WRITE_BUFFER_SIZE 16384  /* 16KB buffer for optimal performance */
+
+/* Write buffer context for batched output */
+typedef struct {
+  FILE *file;
+  unsigned char buffer[WRITE_BUFFER_SIZE];
+  size_t position;
+} WriteBuffer;
+
+/* Buffered write operations */
+void initWriteBuffer(WriteBuffer *wb, FILE *file);
+void flushWriteBuffer(WriteBuffer *wb);
+void putByte(WriteBuffer *wb, unsigned char byte);
+
 /* WAV file format constants */
 #define PCM_WAVE_FORMAT   1
 #define MONO              1
@@ -82,29 +97,29 @@ typedef struct
  * Outputs DC offset (value 128) for the specified number of samples.
  * Allows tape mechanical settling between blocks.
  *
- * @param output  Output WAV file pointer
+ * @param wb      Write buffer context
  * @param s       Number of silence samples to write (in 8-bit bytes)
  */
-void writeSilence(FILE *output, uint32_t s);
+void writeSilence(WriteBuffer *wb, uint32_t s);
 
 /**
  * Write a single FSK modulated pulse (one complete sine wave cycle).
  * Generates a sine wave at the specified frequency.
  *
- * @param output  Output WAV file pointer
+ * @param wb      Write buffer context
  * @param f       Frequency in Hz (LONG_PULSE=1200 Hz or SHORT_PULSE=2400 Hz)
  */
-void writePulse(FILE *output, uint32_t f);
+void writePulse(WriteBuffer *wb, uint32_t f);
 
 /**
  * Write a synchronization header signal.
  * Generates continuous short pulses (2400 Hz) to allow MSX BIOS to sync
  * to the incoming bit stream.
  *
- * @param output  Output WAV file pointer
+ * @param wb      Write buffer context
  * @param s       Number of short pulses at 1200 baud rate
  */
-void writeSync(FILE *output, uint32_t s);
+void writeSync(WriteBuffer *wb, uint32_t s);
 
 /**
  * Encode and transmit a single byte using FSK serial framing.
@@ -116,20 +131,20 @@ void writeSync(FILE *output, uint32_t s);
  *       * 1 bit: two 2400 Hz pulses
  *   - 2 STOP bits (1): four 2400 Hz pulses (2 × 2400 Hz each)
  *
- * @param output  Output WAV file pointer
+ * @param wb      Write buffer context
  * @param byte    Byte value to encode (0-255)
  */
-void writeByte(FILE *output, int byte);
+void writeByte(WriteBuffer *wb, int byte);
 
 /**
  * Transmit a data block from CAS file until encountering a header marker or EOF.
  * Reads 8-byte chunks and encodes each first byte via FSK serial.
  *
  * @param input    Input CAS file pointer
- * @param output   Output WAV file pointer
+ * @param wb       Write buffer context for output
  * @param position Current file position (updated as bytes are read)
  * @param eof      Set to true if EOF marker (0x1A) is encountered
  */
-void writeData(FILE *input, FILE *output, uint32_t *position, bool *eof);
+void writeData(FILE *input, WriteBuffer *wb, uint32_t *position, bool *eof);
 
 #endif /* CASLIB_H */

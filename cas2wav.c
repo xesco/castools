@@ -59,6 +59,7 @@ void showUsage(char *progname)
 int main(int argc, char* argv[])
 {
   FILE *output,*input;
+  WriteBuffer wb;   /* Buffered output context */
   uint32_t size,position;
   int  i,j;
   int  stime = -1;  /* Silence time between blocks (-1 = use default) */
@@ -111,6 +112,9 @@ int main(int argc, char* argv[])
     exit(1);
   }
 
+  /* Initialize write buffer for efficient I/O */
+  initWriteBuffer(&wb, output);
+
   /* Write initial WAV header (size fields will be updated at end) */
   fwrite(&waveheader,sizeof(waveheader),1,output);
 
@@ -132,17 +136,17 @@ int main(int argc, char* argv[])
         if (!memcmp(buffer,ASCII,10)) {
 
           fseek(input,position,SEEK_SET);
-          writeSilence(output,stime>0?OUTPUT_FREQUENCY*stime:LONG_SILENCE);
-          writeSync(output,SYNC_INITIAL);
-          writeData(input,output,&position,&eof);
+          writeSilence(&wb,stime>0?OUTPUT_FREQUENCY*stime:LONG_SILENCE);
+          writeSync(&wb,SYNC_INITIAL);
+          writeData(input,&wb,&position,&eof);
 
           /* Process subsequent data blocks until EOF or no more data */
           do {
 
             position+=8; fseek(input,position,SEEK_SET);
-            writeSilence(output,SHORT_SILENCE);
-            writeSync(output,SYNC_BLOCK);
-            writeData(input,output,&position,&eof);
+            writeSilence(&wb,SHORT_SILENCE);
+            writeSync(&wb,SYNC_BLOCK);
+            writeData(input,&wb,&position,&eof);
 
           } while (!eof && !feof(input));
 
@@ -151,13 +155,13 @@ int main(int argc, char* argv[])
         else if (!memcmp(buffer,BIN,10) || !memcmp(buffer,BASIC,10)) {
 
           fseek(input,position,SEEK_SET);
-          writeSilence(output,stime>0?OUTPUT_FREQUENCY*stime:LONG_SILENCE);
-          writeSync(output,SYNC_INITIAL);
-          writeData(input,output,&position,&eof);
-          writeSilence(output,SHORT_SILENCE);
-          writeSync(output,SYNC_BLOCK);
+          writeSilence(&wb,stime>0?OUTPUT_FREQUENCY*stime:LONG_SILENCE);
+          writeSync(&wb,SYNC_INITIAL);
+          writeData(input,&wb,&position,&eof);
+          writeSilence(&wb,SHORT_SILENCE);
+          writeSync(&wb,SYNC_BLOCK);
           position+=8; fseek(input,position,SEEK_SET);
-          writeData(input,output,&position,&eof);
+          writeData(input,&wb,&position,&eof);
 
         }
         /* Unknown file type - use single block with initial sync */
@@ -165,9 +169,9 @@ int main(int argc, char* argv[])
 
           printf("unknown file type: using long header\n");
           fseek(input,position,SEEK_SET);
-          writeSilence(output,LONG_SILENCE);
-          writeSync(output,SYNC_INITIAL);
-          writeData(input,output,&position,&eof);
+          writeSilence(&wb,LONG_SILENCE);
+          writeSync(&wb,SYNC_INITIAL);
+          writeData(input,&wb,&position,&eof);
         }
 
       }
@@ -175,9 +179,9 @@ int main(int argc, char* argv[])
         /* File type identifier read failed; treat as unknown type */
         printf("unknown file type: using initial sync\n");
         fseek(input,position,SEEK_SET);
-        writeSilence(output,stime>0?OUTPUT_FREQUENCY*stime:LONG_SILENCE);
-        writeSync(output,SYNC_INITIAL);
-        writeData(input,output,&position,&eof);
+        writeSilence(&wb,stime>0?OUTPUT_FREQUENCY*stime:LONG_SILENCE);
+        writeSync(&wb,SYNC_INITIAL);
+        writeData(input,&wb,&position,&eof);
       }
 
     } else {
@@ -188,6 +192,9 @@ int main(int argc, char* argv[])
 
     fseek(input,position,SEEK_SET);
   }
+
+  /* Flush remaining buffered data */
+  flushWriteBuffer(&wb);
 
   /* Update WAV header with final audio data size */
   size = ftell(output)-sizeof(waveheader);
