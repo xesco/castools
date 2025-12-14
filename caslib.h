@@ -33,13 +33,17 @@ extern const char BASIC[10];   /* BASIC program */
 #define SHORT_SILENCE     OUTPUT_FREQUENCY      /* 1 second  */
 #define LONG_SILENCE      OUTPUT_FREQUENCY * 2  /* 2 seconds */
 
-/* FSK (Frequency Shift Keying) tones for bit encoding */
+/* FSK (Frequency Shift Keying) tones for bit encoding
+ * Each 0-bit = 1 pulse  at 1200 Hz
+ * Each 1-bit = 2 pulses at 2400 Hz */
 #define LONG_PULSE        1200   /* 0 bit: 1200 Hz */
 #define SHORT_PULSE       2400   /* 1 bit: 2400 Hz */
 
-/* Synchronization header pulse counts at 1200 baud */
-#define SYNC_INITIAL      16000   /* Initial sync before first data block */
-#define SYNC_BLOCK        4000    /* Sync before subsequent data blocks */
+/* Synchronization header: number of 1-bits at 1200 baud
+ * MSX tape format specifies 16000 and 4000 SHORT_PULSE (2400 Hz) cycles.
+ * Since each 1-bit = 2 pulses, we use 16000/2 and 4000/2 bit counts. */
+#define SYNC_INITIAL      8000    /* 16000/2: Initial sync before first block (~6.67 sec) */
+#define SYNC_BLOCK        2000    /*  4000/2: Block sync between blocks (~1.67 sec) */
 
 /* Baud rate (bits per second) - can be 1200 or 2400 */
 extern int BAUDRATE;
@@ -51,7 +55,7 @@ extern int BAUDRATE;
 typedef struct {
   FILE *file;
   unsigned char buffer[WRITE_BUFFER_SIZE];
-  size_t position;
+  size_t pos;
   int baudrate;
   int output_frequency;
 } WriteBuffer;
@@ -115,38 +119,43 @@ void writePulse(WriteBuffer *wb, uint32_t freq);
 
 /**
  * Write a synchronization header signal.
- * Generates continuous short pulses (2400 Hz) to allow MSX BIOS to sync
+ * Generates continuous 1-bits (2400 Hz pulses) to allow MSX BIOS to sync
  * to the incoming bit stream.
  *
- * @param wb          Write buffer context
- * @param pulse_count Number of short pulses at 1200 baud rate
+ * @param wb   Write buffer context
+ * @param bits Number of 1-bits at 1200 baud (scaled proportionally for other rates)
  */
-void writeSync(WriteBuffer *wb, uint32_t pulse_count);
+void writeSync(WriteBuffer *wb, uint32_t bits);
 
 /**
  * Encode and transmit a single byte using FSK serial framing.
  *
  * Framing format:
- *   - 1 START bit (0): one 1200 Hz pulse
- *   - 8 DATA bits (LSB first):
- *       * 0 bit: one 1200 Hz pulse
- *       * 1 bit: two 2400 Hz pulses
- *   - 2 STOP bits (1): four 2400 Hz pulses (2 × 2400 Hz each)
+ *   - 1 START bit (0)
+ *   - 8 DATA bits (LSB first)
+ *   - 2 STOP bits (1, 1)
  *
- * @param wb      Write buffer context
- * @param byte    Byte value to encode (0-255)
+ * Bit encoding (FSK):
+ *   - 0 bit: one 1200 Hz pulse
+ *   - 1 bit: two 2400 Hz pulses
+ *
+ * @param wb   Write buffer context
+ * @param byte Byte value to encode (0-255)
  */
 void writeByte(WriteBuffer *wb, int byte);
 
 /**
- * Transmit a data block from CAS file until encountering a header marker or EOF.
- * Reads 8-byte chunks and encodes each first byte via FSK serial.
+ * Transmit a data block from in-memory CAS data until encountering a header marker or EOF.
  *
- * @param input    Input CAS file pointer
+ * @param cas      Pointer to CAS file data in memory
+ * @param cas_size Total size of CAS file in bytes
  * @param wb       Write buffer context for output
- * @param position Current file position (updated as bytes are read)
- * @param eof      Set to true if EOF marker (0x1A) is encountered
+ * @param pos Current position in CAS data (updated as bytes are transmitted)
+ * @param eof Set to true if EOF marker (0x1A) is encountered
  */
-void writeData(FILE *input, WriteBuffer *wb, uint32_t *position, bool *eof);
+size_t writeData(const unsigned char *cas, size_t cas_size, WriteBuffer *wb, size_t pos, bool *eof);
+
+/* Get the size of an open file */
+long getFileSize(FILE *file);
 
 #endif /* CASLIB_H */

@@ -60,11 +60,13 @@ int main(int argc, char* argv[])
 {
   FILE *output,*input;
   WriteBuffer wb;   /* Buffered output context */
-  uint32_t size,position;
+  uint32_t size;
+  size_t pos;
   int  i,j;
   int  stime = -1;  /* Silence time between blocks (-1 = use default) */
   bool eof;         /* Set when EOF marker or data block boundary reached */
-  char buffer[10];
+  unsigned char *cas;  /* CAS file data in memory */
+  size_t cas_size;     /* Size of CAS file */
 
   char *ifile = NULL;  /* Input CAS filename */
   char *ofile = NULL;  /* Output WAV filename */
@@ -101,11 +103,26 @@ int main(int argc, char* argv[])
   /* Validate we have both input and output filenames */
   if (ifile==NULL || ofile==NULL) { showUsage(argv[0]); exit(1); }
 
-  /* Open input and output files */
+  /* Open input file and load into memory */
   if ((input=fopen(ifile,"rb"))==NULL) {
     fprintf(stderr,"%s: failed opening %s\n",argv[0],argv[1]);
     exit(1);
   }
+
+  /* Get file size */
+  cas_size = getFileSize(input);
+  if (cas_size < 0) {
+    fprintf(stderr,"%s: failed to get file size of %s\n",argv[0],argv[1]);
+    exit(1);
+  }
+
+  /* Load entire CAS file into memory */
+  cas = (unsigned char*)malloc(cas_size);
+  if (cas == NULL || fread(cas, 1, cas_size, input) != cas_size) {
+    fprintf(stderr,"%s: failed reading %s\n",argv[0],argv[1]);
+    exit(1);
+  }
+  fclose(input);
 
   if ((output=fopen(ofile,"wb"))==NULL) {
     fprintf(stderr,"%s: failed writing %s\n",argv[0],argv[2]);
@@ -118,79 +135,70 @@ int main(int argc, char* argv[])
   /* Write initial WAV header (size fields will be updated at end) */
   fwrite(&waveheader,sizeof(waveheader),1,output);
 
-  position=0;
+  pos=0;
   /* Scan CAS file for HEADER markers (8-byte sync pattern) */
-  while (fread(buffer,1,8,input)==8) {
-
-    if (!memcmp(buffer,HEADER,8)) {
+  while (pos + sizeof(HEADER) <= cas_size) {
+    if (!memcmp(&cas[pos], HEADER, sizeof(HEADER))) {
       /* Header found - read the 10-byte file type identifier */
 
       /* The MSX BIOS makes a distinction between SYNC_INITIAL (initial sync)
          and SYNC_BLOCK (inter-block sync). Using appropriate headers for each
          type improves compatibility with real hardware tape loaders. */
 
-      position+=8;
-      if (fread(buffer,1,10,input) == 10) {
+      pos += sizeof(HEADER);
+      if (pos + 10 <= cas_size) {
 
         /* ASCII file type: multiple data blocks with headers between them */
-        if (!memcmp(buffer,ASCII,10)) {
+        if (!memcmp(&cas[pos], ASCII, 10)) {
 
-          fseek(input,position,SEEK_SET);
           writeSilence(&wb,stime>0?wb.output_frequency*stime:LONG_SILENCE);
           writeSync(&wb,SYNC_INITIAL);
-          writeData(input,&wb,&position,&eof);
+          pos = writeData(cas, cas_size, &wb, pos, &eof);
 
           /* Process subsequent data blocks until EOF or no more data */
           do {
 
-            position+=8; fseek(input,position,SEEK_SET);
             writeSilence(&wb,SHORT_SILENCE);
             writeSync(&wb,SYNC_BLOCK);
-            writeData(input,&wb,&position,&eof);
+            pos = writeData(cas, cas_size, &wb, pos + sizeof(HEADER), &eof);
 
-          } while (!eof && !feof(input));
+          } while (!eof && pos < cas_size);
 
         }
         /* Binary/BASIC file type: two-block structure (header block + data block) */
-        else if (!memcmp(buffer,BIN,10) || !memcmp(buffer,BASIC,10)) {
+        else if (!memcmp(&cas[pos], BIN, 10) || !memcmp(&cas[pos], BASIC, 10)) {
 
-          fseek(input,position,SEEK_SET);
           writeSilence(&wb,stime>0?wb.output_frequency*stime:LONG_SILENCE);
           writeSync(&wb,SYNC_INITIAL);
-          writeData(input,&wb,&position,&eof);
+          pos = writeData(cas, cas_size, &wb, pos, &eof);
           writeSilence(&wb,SHORT_SILENCE);
           writeSync(&wb,SYNC_BLOCK);
-          position+=8; fseek(input,position,SEEK_SET);
-          writeData(input,&wb,&position,&eof);
+          pos = writeData(cas, cas_size, &wb, pos + sizeof(HEADER), &eof);
 
         }
         /* Unknown file type - use single block with initial sync */
         else {
 
           printf("unknown file type: using long header\n");
-          fseek(input,position,SEEK_SET);
           writeSilence(&wb,LONG_SILENCE);
           writeSync(&wb,SYNC_INITIAL);
-          writeData(input,&wb,&position,&eof);
+          pos = writeData(cas, cas_size, &wb, pos, &eof);
         }
 
       }
       else {
         /* File type identifier read failed; treat as unknown type */
         printf("unknown file type: using initial sync\n");
-        fseek(input,position,SEEK_SET);
         writeSilence(&wb,stime>0?wb.output_frequency*stime:LONG_SILENCE);
         writeSync(&wb,SYNC_INITIAL);
-        writeData(input,&wb,&position,&eof);
+        pos = writeData(cas, cas_size, &wb, pos, &eof);
       }
 
     } else {
       /* Non-header data found - skip byte and continue (handles corrupted files) */
       fprintf(stderr,"skipping unhandled data\n");
-      position++;
+      pos++;
     }
-
-    fseek(input,position,SEEK_SET);
   }
 
   /* Flush remaining buffered data */
@@ -206,7 +214,7 @@ int main(int argc, char* argv[])
   fwrite(&waveheader,sizeof(waveheader),1,output);
 
   fclose(output);
-  fclose(input);
+  free(cas);
 
   return 0;
 }

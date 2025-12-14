@@ -30,7 +30,7 @@ int BAUDRATE = 1200;
 void initWriteBuffer(WriteBuffer *wb, FILE *file, int baudrate, int output_frequency)
 {
   wb->file = file;
-  wb->position = 0;
+  wb->pos = 0;
   wb->baudrate = baudrate;
   wb->output_frequency = output_frequency;
 }
@@ -38,17 +38,17 @@ void initWriteBuffer(WriteBuffer *wb, FILE *file, int baudrate, int output_frequ
 /* Flush buffered data to file */
 void flushWriteBuffer(WriteBuffer *wb)
 {
-  if (wb->position > 0) {
-    fwrite(wb->buffer, 1, wb->position, wb->file);
-    wb->position = 0;
+  if (wb->pos > 0) {
+    fwrite(wb->buffer, 1, wb->pos, wb->file);
+    wb->pos = 0;
   }
 }
 
 /* Write a single byte to buffer, flushing when full */
 void putByte(WriteBuffer *wb, unsigned char byte)
 {
-  wb->buffer[wb->position++] = byte;
-  if (wb->position >= WRITE_BUFFER_SIZE)
+  wb->buffer[wb->pos++] = byte;
+  if (wb->pos >= WRITE_BUFFER_SIZE)
     flushWriteBuffer(wb);
 }
 
@@ -80,7 +80,7 @@ static void init_sine_table(void)
   sine_table_initialized = 1;
 }
 
-/* Generate FSK pulse: 0 bit→1200Hz (36 samples), 1 bit→2400Hz (18 samples) */
+/* Generate a single FSK pulse at specified frequency (one complete sine wave cycle) */
 void writePulse(WriteBuffer *wb, uint32_t freq)
 {
   uint32_t n;
@@ -104,89 +104,93 @@ void writePulse(WriteBuffer *wb, uint32_t freq)
   }
 }
 
-/* Generate synchronization pulses (SHORT_PULSE tones scaled by BAUDRATE)
- * Note: pulse_count is in complete sine wave cycles.
- * At 1200 baud: 1 pulse (2400 Hz) = 18 samples = ~417 microseconds
- * At 2400 baud: 1 pulse (2400 Hz) =  9 samples = ~208 microseconds */
-void writeSync(WriteBuffer *wb, uint32_t pulse_count)
+/* Write a 0-bit: one 1200 Hz pulse */
+static void write0(WriteBuffer *wb)
 {
-  /* Scale pulse count by baudrate/1200 to maintain same duration */
-  for (int i = 0; i < (int)(pulse_count*(wb->baudrate / 1200.0)); i++)
-    writePulse(wb, SHORT_PULSE);
+  writePulse(wb, LONG_PULSE);
 }
 
-/* Serial encoding: START(0) + 8 bits LSB-first + STOP(1); bit-1→2400Hz, bit-0→1200Hz */
+/* Write a 1-bit: two 2400 Hz pulses */
+static void write1(WriteBuffer *wb)
+{
+  writePulse(wb, SHORT_PULSE);
+  writePulse(wb, SHORT_PULSE);
+}
+
+/* Generate synchronization header (continuous 1-bits for MSX BIOS sync)
+ * bits: base 1-bit count at 1200 baud (automatically scaled for other rates to maintain duration).
+ * Examples with bits=8000:
+ *   At 1200 baud:  8000 bits transmitted = ~6.67 seconds
+ *   At 2400 baud: 16000 bits transmitted = ~6.67 seconds (same duration) */
+void writeSync(WriteBuffer *wb, uint32_t bits)
+{
+  /* Scale bit count by baudrate/1200 to maintain same duration */
+  for (int i = 0; i < (int)(bits * (wb->baudrate / 1200.0)); i++)
+    write1(wb);
+}
+
+/* Serial encoding: START(0) + 8 bits LSB-first + STOP(1,1) */
 void writeByte(WriteBuffer *wb, int byte)
 {
-  /* START: 0 */
-  writePulse(wb, LONG_PULSE);
+  write0(wb);  /* START bit */
 
-  /* DATA: 8 bits LSB-first; bit-1→2×SHORT, bit-0→LONG */
+  /* DATA: 8 bits, LSB first */
   for (int i = 0; i < 8; i++) {
-    if (byte & 1) {
-      /* Bit=1: two 2400Hz pulses */
-      writePulse(wb, SHORT_PULSE);
-      writePulse(wb, SHORT_PULSE);
-    } else {
-      /* Bit=0: one 1200Hz pulse */
-      writePulse(wb, LONG_PULSE);
-    }
-    /* Next bit */
+    if (byte & 1)
+      write1(wb);
+    else
+      write0(wb);
     byte = byte >> 1;
   }
 
-  /* STOP: 11 (4×SHORT=2 bits) */
-  for (int i = 0; i < 4; i++)
-    writePulse(wb, SHORT_PULSE);
+  /* STOP: two 1-bits */
+  write1(wb);
+  write1(wb);
 }
 
 /* Transmit data block until HEADER marker or EOF; sets *eof if EOF_MARKER found
- *
- * Uses an 8-byte sliding window in memory:
- * - Read bytes one at a time (no seeking overhead)
- * - Maintain last 8 bytes in memory window
- * - When window fills, transmit oldest byte before adding new one
- * - Check for HEADER pattern after each byte added */
-void writeData(FILE *input, WriteBuffer *wb, uint32_t *position, bool *eof)
+ * Returns the new position after processing.
+ * Works with in-memory CAS data for simple and efficient processing. */
+size_t writeData(const unsigned char *cas, size_t cas_size, WriteBuffer *wb, size_t pos, bool *eof)
 {
-  char window[8] = {0};
-  int window_size = 0;
-  
   *eof = false;
-
-  while (1) {
-    int byte = fgetc(input);
-    if (byte == EOF)
-      break;
-    
-    /* If window is full, transmit oldest byte before adding new one */
-    if (window_size == 8) {
-      writeByte(wb, window[0]);
-      if (window[0] == EOF_MARKER)
-        *eof = true;
-      (*position)++;
-      /* Shift window left to make room */
-      memmove(window, window + 1, 7);
-      window_size = 7;
+  
+  /* Transmit bytes until we find a HEADER or reach end of data */
+  while ((pos + sizeof(HEADER)) <= cas_size) {
+    /* Check if current position starts a HEADER */
+    if (!memcmp(&cas[pos], HEADER, sizeof(HEADER))) {
+      return pos;  /* Stop before HEADER */
     }
     
-    /* Add new byte to end of window */
-    window[window_size++] = byte;
+    /* Transmit this byte */
+    writeByte(wb, cas[pos]);
     
-    /* Check if window now contains complete HEADER */
-    if (window_size == 8 && !memcmp(window, HEADER, 8)) {
-      /* Found HEADER - position file pointer before it and stop */
-      fseek(input, *position, SEEK_SET);
-      return;
+    /* Check for EOF marker */
+    if (cas[pos] == EOF_MARKER) {
+      *eof = true;
     }
+    pos++;
   }
   
-  /* Transmit any remaining bytes in window at EOF */
-  for (int i = 0; i < window_size; i++) {
-    writeByte(wb, window[i]);
-    if (window[i] == EOF_MARKER)
-      *eof = true;
+  /* Transmit any remaining bytes at end of file */
+  while (pos < cas_size) {
+    writeByte(wb, cas[pos]);
+    pos++;
   }
-  *position += window_size;
+  
+  return pos;
+}
+
+/* Get the size of an open file */
+long getFileSize(FILE *file)
+{
+  long size;
+  long current = ftell(file);
+  
+  fseek(file, 0, SEEK_END);
+  size = ftell(file);
+  fseek(file, current, SEEK_SET);
+  
+  return size;
 }
 
