@@ -191,3 +191,28 @@ long getFileSize(FILE *file)
   return size;
 }
 
+/* Identify the file type from the 10-byte type identifier */
+FileType identifyFileType(const unsigned char *data)
+{
+  if (!memcmp(data, ASCII, 10))
+    return FILE_TYPE_ASCII;
+  if (!memcmp(data, BIN, 10) || !memcmp(data, BASIC, 10))
+    return FILE_TYPE_BINARY;
+  return FILE_TYPE_UNKNOWN;
+}
+
+/* Update WAV file header with final audio data size */
+void updateWavHeader(FILE *file, WAVE_HEADER *header)
+{
+  uint32_t size;
+  
+  /* Calculate audio data size */
+  size = ftell(file) - sizeof(WAVE_HEADER);
+  header->nDataBytes = size;
+  header->RiffSize = size + sizeof(WAVE_HEADER) - 8;
+  
+  /* Rewrite header with correct sizes */
+  fseek(file, 0, SEEK_SET);
+  fwrite(header, sizeof(WAVE_HEADER), 1, file);
+}
+

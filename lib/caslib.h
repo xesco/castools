@@ -24,6 +24,13 @@ extern const char ASCII[10];   /* ASCII text file */
 extern const char BIN[10];     /* Binary machine code */
 extern const char BASIC[10];   /* BASIC program */
 
+/* CAS file type enumeration */
+typedef enum {
+  FILE_TYPE_ASCII,      /* ASCII text file */
+  FILE_TYPE_BINARY,     /* Binary or BASIC program */
+  FILE_TYPE_UNKNOWN     /* Unknown/unrecognized type */
+} FileType;
+
 /* Audio output configuration */
 
 /* Audio output sample rate: 43200 Hz, 8-bit mono PCM */
@@ -183,5 +190,22 @@ size_t writeData(const unsigned char *cas, size_t cas_size, WriteBuffer *wb, siz
  * @return File size in bytes, or -1 on error
  */
 long getFileSize(FILE *file);
+
+/**
+ * Identify the CAS file type from the 10-byte type identifier.
+ *
+ * @param data Pointer to the 10-byte file type identifier
+ * @return FileType enum value indicating the file type
+ */
+FileType identifyFileType(const unsigned char *data);
+
+/**
+ * Update WAV file header with final audio data size.
+ * Calculates the data size, updates the header structure, and rewrites it to the file.
+ *
+ * @param file Output file handle (must be positioned after writing all audio data)
+ * @param header Pointer to WAV header structure to update and write
+ */
+void updateWavHeader(FILE *file, WAVE_HEADER *header);
 
 #endif /* CASLIB_H */

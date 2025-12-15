@@ -27,34 +27,33 @@
 #include "lib/caslib.h"
 #include "lib/clilib.h"
 
-/* Preset WAV header template (sizes updated at program end with actual data size) */
-WAVE_HEADER waveheader =
-{
-  { "RIFF" },
-  0,                    /* Will be set to actual file size - 8 */
-  { "WAVE" },
-  { "fmt " },
-  16,                   /* Format chunk size (16 bytes for PCM) */
-  PCM_WAVE_FORMAT,      /* PCM format identifier */
-  MONO,                 /* Single channel audio */
-  OUTPUT_FREQUENCY,     /* 43200 Hz sample rate */
-  OUTPUT_FREQUENCY,     /* Bytes per second = sample rate for 8-bit mono */
-  1,                    /* Block alignment (1 byte per sample for 8-bit mono) */
-  8,                    /* 8 bits per sample */
-  { "data" },
-  0                     /* Will be set to actual audio data size */
-};
-
 int main(int argc, char* argv[])
 {
   FILE *output;
-  WriteBuffer wb;   /* Buffered output context */
-  uint32_t size;    /* Final wav data size */
-  size_t pos;       /* Current position in CAS data */
+  WriteBuffer wb;      /* Buffered output context */
+  size_t pos;          /* Current position in CAS data */
   bool eof;            /* Set when EOF marker or data block boundary reached */
   unsigned char *cas;  /* CAS file data in memory */
   size_t cas_size;     /* Size of CAS file */
   ProgramArgs args;
+
+  /* Preset WAV header template (sizes updated at program end with actual data size) */
+  WAVE_HEADER waveheader =
+  {
+    { "RIFF" },
+    0,                    /* Will be set to actual file size - 8 */
+    { "WAVE" },
+    { "fmt " },
+    16,                   /* Format chunk size (16 bytes for PCM) */
+    PCM_WAVE_FORMAT,      /* PCM format identifier */
+    MONO,                 /* Single channel audio */
+    OUTPUT_FREQUENCY,     /* 43200 Hz sample rate */
+    OUTPUT_FREQUENCY,     /* Bytes per second = sample rate for 8-bit mono */
+    1,                    /* Block alignment (1 byte per sample for 8-bit mono) */
+    8,                    /* 8 bits per sample */
+    { "data" },
+    0                     /* Will be set to actual audio data size */
+  };
 
   /* Parse command line arguments */
   parseArguments(argc, argv, &args);
@@ -68,7 +67,7 @@ int main(int argc, char* argv[])
   pos=0;
   /* Scan CAS file for HEADER markers (8-byte sync pattern) */
   while (pos + sizeof(HEADER) <= cas_size) {
-    if (!memcmp(&cas[pos], HEADER, sizeof(HEADER))) {
+    if (!memcmp(cas+pos, HEADER, sizeof(HEADER))) {
       /* Header found - read the 10-byte file type identifier */
 
       /* The MSX BIOS makes a distinction between SYNC_INITIAL (initial sync)
@@ -77,44 +76,40 @@ int main(int argc, char* argv[])
 
       pos += sizeof(HEADER);
       if (pos + 10 <= cas_size) {
+        FileType file_type = identifyFileType(cas+pos);
+        switch (file_type) {
+          case FILE_TYPE_ASCII:
+            /* ASCII file type: multiple data blocks with headers between them */
+            writeSilence(&wb, args.silence_time);
+            writeSync(&wb,SYNC_INITIAL);
+            pos = writeData(cas, cas_size, &wb, pos, &eof);
 
-        /* ASCII file type: multiple data blocks with headers between them */
-        if (!memcmp(&cas[pos], ASCII, 10)) {
+            /* Process subsequent data blocks until EOF or no more data */
+            do {
+              writeSilence(&wb,SHORT_SILENCE);
+              writeSync(&wb,SYNC_BLOCK);
+              pos = writeData(cas, cas_size, &wb, pos + sizeof(HEADER), &eof);
+            } while (!eof && pos < cas_size);
+            break;
 
-          writeSilence(&wb, args.silence_time);
-          writeSync(&wb,SYNC_INITIAL);
-          pos = writeData(cas, cas_size, &wb, pos, &eof);
-
-          /* Process subsequent data blocks until EOF or no more data */
-          do {
-
+          case FILE_TYPE_BINARY:
+            /* Binary/BASIC file type: two-block structure (header block + data block) */
+            writeSilence(&wb, args.silence_time);
+            writeSync(&wb,SYNC_INITIAL);
+            pos = writeData(cas, cas_size, &wb, pos, &eof);
             writeSilence(&wb,SHORT_SILENCE);
             writeSync(&wb,SYNC_BLOCK);
             pos = writeData(cas, cas_size, &wb, pos + sizeof(HEADER), &eof);
+            break;
 
-          } while (!eof && pos < cas_size);
-
+          case FILE_TYPE_UNKNOWN:
+            /* Unknown file type - use single block with initial sync */
+            printf("unknown file type: using long header\n");
+            writeSilence(&wb,LONG_SILENCE);
+            writeSync(&wb,SYNC_INITIAL);
+            pos = writeData(cas, cas_size, &wb, pos, &eof);
+            break;
         }
-        /* Binary/BASIC file type: two-block structure (header block + data block) */
-        else if (!memcmp(&cas[pos], BIN, 10) || !memcmp(&cas[pos], BASIC, 10)) {
-
-          writeSilence(&wb, args.silence_time);
-          writeSync(&wb,SYNC_INITIAL);
-          pos = writeData(cas, cas_size, &wb, pos, &eof);
-          writeSilence(&wb,SHORT_SILENCE);
-          writeSync(&wb,SYNC_BLOCK);
-          pos = writeData(cas, cas_size, &wb, pos + sizeof(HEADER), &eof);
-
-        }
-        /* Unknown file type - use single block with initial sync */
-        else {
-
-          printf("unknown file type: using long header\n");
-          writeSilence(&wb,LONG_SILENCE);
-          writeSync(&wb,SYNC_INITIAL);
-          pos = writeData(cas, cas_size, &wb, pos, &eof);
-        }
-
       }
       else {
         /* File type identifier read failed; treat as unknown type */
@@ -135,13 +130,7 @@ int main(int argc, char* argv[])
   flushWriteBuffer(&wb);
 
   /* Update WAV header with final audio data size */
-  size = ftell(output)-sizeof(waveheader);
-  waveheader.nDataBytes = size;
-  waveheader.RiffSize = size;
-
-  /* Rewrite header with correct sizes */
-  fseek(output,0,SEEK_SET);
-  fwrite(&waveheader,sizeof(waveheader),1,output);
+  updateWavHeader(output, &waveheader);
 
   fclose(output);
   free(cas);
