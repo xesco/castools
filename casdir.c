@@ -22,7 +22,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <memory.h>
-#include "caslib.h"
+#include "lib/caslib.h"
 
 /* State machine for tracking expected next block type */
 enum next {

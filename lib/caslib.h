@@ -45,9 +45,6 @@ extern const char BASIC[10];   /* BASIC program */
 #define SYNC_INITIAL      8000    /* 16000/2: Initial sync before first block (~6.67 sec) */
 #define SYNC_BLOCK        2000    /*  4000/2: Block sync between blocks (~1.67 sec) */
 
-/* Baud rate (bits per second) - can be 1200 or 2400 */
-extern int BAUDRATE;
-
 /* Buffered I/O configuration */
 #define WRITE_BUFFER_SIZE 16384  /* 16KB buffer for optimal performance */
 

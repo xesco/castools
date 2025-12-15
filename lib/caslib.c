@@ -23,9 +23,6 @@ const char BASIC[10]  = { 0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3,0xD3 };  
 /* MSX tape EOF marker (Ctrl-Z) */
 #define EOF_MARKER 0x1A
 
-/* Baudrate: 1200 or 2400 baud (configurable via command line) */
-int BAUDRATE = 1200;
-
 /* Initialize write buffer context */
 void initWriteBuffer(WriteBuffer *wb, FILE *file, int baudrate, int output_frequency)
 {

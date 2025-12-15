@@ -25,7 +25,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <memory.h>
-#include "caslib.h"
+#include "lib/caslib.h"
 
 /* Detection thresholds for signal processing */
 #define THRESHOLD_SILENCE   100  /* Min consecutive samples to detect silence */

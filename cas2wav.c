@@ -23,10 +23,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <memory.h>
-#include <math.h>
-#include "caslib.h"
-
+#include <string.h>
+#include "lib/caslib.h"
+#include "lib/clilib.h"
 
 /* Preset WAV header template (sizes updated at program end with actual data size) */
 WAVE_HEADER waveheader =
@@ -46,75 +45,9 @@ WAVE_HEADER waveheader =
   0                     /* Will be set to actual audio data size */
 };
 
-/* Program arguments structure */
-typedef struct {
-  char *input_file;
-  char *output_file;
-  int baudrate;
-  int silence_time;  /* Silence duration in samples (default: LONG_SILENCE) */
-} ProgramArgs;
-
-/* Display usage information and command-line options */
-void showUsage(char *progname)
-{
-  printf("usage: %s [-2] [-s seconds] <ifile> <ofile>\n"
-         " -2   use 2400 baud as output baudrate\n"
-         " -s   define gap time (in seconds) between blocks (default 2)\n"
-   ,progname);
-}
-
-/* Parse command line arguments into ProgramArgs structure */
-void parseArguments(int argc, char* argv[], ProgramArgs *args)
-{
-  /* Initialize with defaults */
-  args->input_file = NULL;
-  args->output_file = NULL;
-  args->baudrate = BAUDRATE;
-  args->silence_time = LONG_SILENCE;
-
-  /* Parse command line options */
-  for (int i=1; i<argc; i++) {
-    if (argv[i][0]=='-' && argv[i][1]!='\0') {
-
-      /* Process option flags */
-      if (argv[i][1]=='2' && argv[i][2]=='\0') {
-        args->baudrate = 2400;
-      }
-      else if (argv[i][1]=='s' && argv[i][2]=='\0') {
-        /* Custom silence duration - requires next argument */
-        if (i+1 >= argc) {
-          fprintf(stderr,"%s: option -s requires an argument\n",argv[0]);
-          exit(1);
-        }
-        args->silence_time = OUTPUT_FREQUENCY * atof(argv[++i]);
-      }
-      else {
-        fprintf(stderr,"%s: invalid option '%s'\n",argv[0],argv[i]);
-        exit(1);
-      }
-      continue;
-    }
-
-    /* Collect input and output filenames from positional arguments */
-    if (args->input_file==NULL) { args->input_file=argv[i]; continue; }
-    if (args->output_file==NULL) { args->output_file=argv[i]; continue; }
-
-    /* Too many arguments */
-    fprintf(stderr,"%s: too many arguments\n",argv[0]);
-    exit(1);
-  }
-
-  /* Validate we have both input and output filenames */
-  if (args->input_file==NULL || args->output_file==NULL) {
-    showUsage(argv[0]);
-    exit(1);
-  }
-}
-
-
 int main(int argc, char* argv[])
 {
-  FILE *output,*input;
+  FILE *output;
   WriteBuffer wb;   /* Buffered output context */
   uint32_t size;    /* Final wav data size */
   size_t pos;       /* Current position in CAS data */
@@ -126,37 +59,8 @@ int main(int argc, char* argv[])
   /* Parse command line arguments */
   parseArguments(argc, argv, &args);
 
-  /* Set global baudrate from parsed arguments */
-  BAUDRATE = args.baudrate;
-
-  /* Open input file */
-  if ((input=fopen(args.input_file,"rb"))==NULL) {
-    fprintf(stderr,"%s: failed opening %s\n",argv[0],args.input_file);
-    exit(1);
-  }
-
-  /* Get file size */
-  cas_size = getFileSize(input);
-  if (cas_size < 0) {
-    fprintf(stderr,"%s: failed to get file size of %s\n",argv[0],args.input_file);
-    exit(1);
-  }
-
-  /* Load entire CAS file into memory */
-  cas = (unsigned char*)malloc(cas_size);
-  if (cas == NULL || fread(cas, 1, cas_size, input) != cas_size) {
-    fprintf(stderr,"%s: failed reading %s\n",argv[0],args.input_file);
-    exit(1);
-  }
-  fclose(input);
-
-  if ((output=fopen(args.output_file,"wb"))==NULL) {
-    fprintf(stderr,"%s: failed writing %s\n",argv[0],args.output_file);
-    exit(1);
-  }
-
-  /* Initialize write buffer for efficient I/O */
-  initWriteBuffer(&wb, output, BAUDRATE, OUTPUT_FREQUENCY);
+  /* Load CAS file and prepare output */
+  loadAndPrepareFiles(argv[0], &args, &cas, &cas_size, &output, &wb);
 
   /* Write initial WAV header (size fields will be updated at end) */
   fwrite(&waveheader,sizeof(waveheader),1,output);
