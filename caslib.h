@@ -60,9 +60,32 @@ typedef struct {
   int output_frequency;
 } WriteBuffer;
 
-/* Buffered write operations */
-void initWriteBuffer(WriteBuffer *wb, FILE *file, int baudrate, int output_frequency);
+/**
+ * Initialize a write buffer for buffered output.
+ * Sets up the buffer context with file handle and encoding parameters.
+ *
+ * @param wb               Write buffer to initialize
+ * @param file             Output file handle
+ * @param baudrate         Baud rate (1200 or 2400)
+ * @param output_frequency Sample rate in Hz (typically OUTPUT_FREQUENCY)
+ */
+void initWriteBuffer(WriteBuffer *wb, FILE *file, int baudrate, int output_freq);
+
+/**
+ * Flush any remaining data in the buffer to the output file.
+ * Should be called before closing the file or when forcing data to disk.
+ *
+ * @param wb Write buffer context
+ */
 void flushWriteBuffer(WriteBuffer *wb);
+
+/**
+ * Write a single byte to the buffer, flushing automatically when full.
+ * This is the core buffered write primitive used by all output functions.
+ *
+ * @param wb   Write buffer context
+ * @param byte Byte value to write (0-255)
+ */
 void putByte(WriteBuffer *wb, unsigned char byte);
 
 /* WAV file format constants */
@@ -155,7 +178,13 @@ void writeByte(WriteBuffer *wb, int byte);
  */
 size_t writeData(const unsigned char *cas, size_t cas_size, WriteBuffer *wb, size_t pos, bool *eof);
 
-/* Get the size of an open file */
+/**
+ * Get the size of an open file.
+ * Uses fseek/ftell and restores the original file position.
+ *
+ * @param file Open file handle
+ * @return File size in bytes, or -1 on error
+ */
 long getFileSize(FILE *file);
 
 #endif /* CASLIB_H */

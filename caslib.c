@@ -158,7 +158,7 @@ size_t writeData(const unsigned char *cas, size_t cas_size, WriteBuffer *wb, siz
   /* Transmit bytes until we find a HEADER or reach end of data */
   while ((pos + sizeof(HEADER)) <= cas_size) {
     /* Check if current position starts a HEADER */
-    if (!memcmp(&cas[pos], HEADER, sizeof(HEADER))) {
+    if (!memcmp(cas+pos, HEADER, sizeof(HEADER))) {
       return pos;  /* Stop before HEADER */
     }
     

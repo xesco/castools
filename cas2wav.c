@@ -46,6 +46,14 @@ WAVE_HEADER waveheader =
   0                     /* Will be set to actual audio data size */
 };
 
+/* Program arguments structure */
+typedef struct {
+  char *input_file;
+  char *output_file;
+  int baudrate;
+  int silence_time;  /* Silence duration in samples (default: LONG_SILENCE) */
+} ProgramArgs;
+
 /* Display usage information and command-line options */
 void showUsage(char *progname)
 {
@@ -55,77 +63,95 @@ void showUsage(char *progname)
    ,progname);
 }
 
+/* Parse command line arguments into ProgramArgs structure */
+void parseArguments(int argc, char* argv[], ProgramArgs *args)
+{
+  /* Initialize with defaults */
+  args->input_file = NULL;
+  args->output_file = NULL;
+  args->baudrate = BAUDRATE;
+  args->silence_time = LONG_SILENCE;
+
+  /* Parse command line options */
+  for (int i=1; i<argc; i++) {
+    if (argv[i][0]=='-' && argv[i][1]!='\0') {
+
+      /* Process option flags */
+      if (argv[i][1]=='2' && argv[i][2]=='\0') {
+        args->baudrate = 2400;
+      }
+      else if (argv[i][1]=='s' && argv[i][2]=='\0') {
+        /* Custom silence duration - requires next argument */
+        if (i+1 >= argc) {
+          fprintf(stderr,"%s: option -s requires an argument\n",argv[0]);
+          exit(1);
+        }
+        args->silence_time = OUTPUT_FREQUENCY * atof(argv[++i]);
+      }
+      else {
+        fprintf(stderr,"%s: invalid option '%s'\n",argv[0],argv[i]);
+        exit(1);
+      }
+      continue;
+    }
+
+    /* Collect input and output filenames from positional arguments */
+    if (args->input_file==NULL) { args->input_file=argv[i]; continue; }
+    if (args->output_file==NULL) { args->output_file=argv[i]; continue; }
+
+    /* Too many arguments */
+    fprintf(stderr,"%s: too many arguments\n",argv[0]);
+    exit(1);
+  }
+
+  /* Validate we have both input and output filenames */
+  if (args->input_file==NULL || args->output_file==NULL) {
+    showUsage(argv[0]);
+    exit(1);
+  }
+}
+
 
 int main(int argc, char* argv[])
 {
   FILE *output,*input;
   WriteBuffer wb;   /* Buffered output context */
-  uint32_t size;
-  size_t pos;
-  int  i,j;
-  int  stime = -1;  /* Silence time between blocks (-1 = use default) */
-  bool eof;         /* Set when EOF marker or data block boundary reached */
+  uint32_t size;    /* Final wav data size */
+  size_t pos;       /* Current position in CAS data */
+  bool eof;            /* Set when EOF marker or data block boundary reached */
   unsigned char *cas;  /* CAS file data in memory */
   size_t cas_size;     /* Size of CAS file */
+  ProgramArgs args;
 
-  char *ifile = NULL;  /* Input CAS filename */
-  char *ofile = NULL;  /* Output WAV filename */
+  /* Parse command line arguments */
+  parseArguments(argc, argv, &args);
 
-  /* Parse command line options */
-  for (i=1; i<argc; i++) {
+  /* Set global baudrate from parsed arguments */
+  BAUDRATE = args.baudrate;
 
-    if (argv[i][0]=='-') {
-
-      for(j=1;j && argv[i][j]!='\0';j++)
-
-        switch(argv[i][j]) {
-
-        case '2': BAUDRATE=2400; break;      /* Use 2400 baud instead of 1200 */
-        case 's': stime=atof(argv[++i]); j=-1; break;  /* Custom silence duration */
-
-        default:
-          fprintf(stderr,"%s: invalid option\n",argv[0]);
-          exit(1);
-        }
-
-      continue;
-    }
-
-    /* Collect input and output filenames from positional arguments */
-    if (ifile==NULL) { ifile=argv[i]; continue; }
-    if (ofile==NULL) { ofile=argv[i]; continue; }
-
-    /* Too many arguments */
-    fprintf(stderr,"%s: invalid option\n",argv[0]);
-    exit(1);
-  }
-
-  /* Validate we have both input and output filenames */
-  if (ifile==NULL || ofile==NULL) { showUsage(argv[0]); exit(1); }
-
-  /* Open input file and load into memory */
-  if ((input=fopen(ifile,"rb"))==NULL) {
-    fprintf(stderr,"%s: failed opening %s\n",argv[0],argv[1]);
+  /* Open input file */
+  if ((input=fopen(args.input_file,"rb"))==NULL) {
+    fprintf(stderr,"%s: failed opening %s\n",argv[0],args.input_file);
     exit(1);
   }
 
   /* Get file size */
   cas_size = getFileSize(input);
   if (cas_size < 0) {
-    fprintf(stderr,"%s: failed to get file size of %s\n",argv[0],argv[1]);
+    fprintf(stderr,"%s: failed to get file size of %s\n",argv[0],args.input_file);
     exit(1);
   }
 
   /* Load entire CAS file into memory */
   cas = (unsigned char*)malloc(cas_size);
   if (cas == NULL || fread(cas, 1, cas_size, input) != cas_size) {
-    fprintf(stderr,"%s: failed reading %s\n",argv[0],argv[1]);
+    fprintf(stderr,"%s: failed reading %s\n",argv[0],args.input_file);
     exit(1);
   }
   fclose(input);
 
-  if ((output=fopen(ofile,"wb"))==NULL) {
-    fprintf(stderr,"%s: failed writing %s\n",argv[0],argv[2]);
+  if ((output=fopen(args.output_file,"wb"))==NULL) {
+    fprintf(stderr,"%s: failed writing %s\n",argv[0],args.output_file);
     exit(1);
   }
 
@@ -151,7 +177,7 @@ int main(int argc, char* argv[])
         /* ASCII file type: multiple data blocks with headers between them */
         if (!memcmp(&cas[pos], ASCII, 10)) {
 
-          writeSilence(&wb,stime>0?wb.output_frequency*stime:LONG_SILENCE);
+          writeSilence(&wb, args.silence_time);
           writeSync(&wb,SYNC_INITIAL);
           pos = writeData(cas, cas_size, &wb, pos, &eof);
 
@@ -168,7 +194,7 @@ int main(int argc, char* argv[])
         /* Binary/BASIC file type: two-block structure (header block + data block) */
         else if (!memcmp(&cas[pos], BIN, 10) || !memcmp(&cas[pos], BASIC, 10)) {
 
-          writeSilence(&wb,stime>0?wb.output_frequency*stime:LONG_SILENCE);
+          writeSilence(&wb, args.silence_time);
           writeSync(&wb,SYNC_INITIAL);
           pos = writeData(cas, cas_size, &wb, pos, &eof);
           writeSilence(&wb,SHORT_SILENCE);
@@ -189,7 +215,7 @@ int main(int argc, char* argv[])
       else {
         /* File type identifier read failed; treat as unknown type */
         printf("unknown file type: using initial sync\n");
-        writeSilence(&wb,stime>0?wb.output_frequency*stime:LONG_SILENCE);
+        writeSilence(&wb, args.silence_time);
         writeSync(&wb,SYNC_INITIAL);
         pos = writeData(cas, cas_size, &wb, pos, &eof);
       }
