@@ -2,7 +2,7 @@
 
 ## Technical Specification and Reference
 
-A definitive, implementation-grade description of the MSX cassette system and the CAS container format, based on official MSX documentation, BIOS behavior, and real-world CAS analysis.
+This document describes the MSX cassette tape protocol and CAS container format for implementation purposes. Information gathered from community knowledge, existing code implementations, and practical analysis.
 
 ---
 
@@ -29,9 +29,6 @@ The MSX standard defines a cassette tape storage protocol using audio encoding. 
 - **MSX tape encoding** - Physical audio protocol (official MSX standard)
 - **File types** - ASCII, BASIC, and BINARY semantics
 - **BIOS interface** - How MSX hardware handles tape operations
-
-**Key distinction:** CAS preserves structure; tape encodes audio. They are separate concepts requiring conversion tools.
-
 ---
 
 ## 2. Glossary
@@ -51,11 +48,15 @@ A linear sequence of blocks with no directory, global header, or length fields.
 
 ### 3.1 Block Delimiter (CAS HEADER)
 
-Every block begins with an 8-byte marker: `1F A6 DE BA CC 13 7D 74`
+The CAS HEADER is a magic number that marks the start of each block in the file. It allows parsers to reliably locate block boundaries without needing length fields.
 
-This exists only in CAS files, never in MSX tape audio.
+Every block begins with this 8-byte marker: `1F A6 DE BA CC 13 7D 74`
+
+This delimiter was invented by the community for the CAS preservation format. It exists only in CAS files, never in MSX tape audio.
 
 ### 3.2 File Structure
+
+A CAS file is organized as a sequence of blocks, each preceded by a CAS HEADER. There is no table of contents or directory—you must scan through the file sequentially to find what's inside.
 
 ```
 [CAS HEADER] [BLOCK PAYLOAD]
@@ -63,28 +64,28 @@ This exists only in CAS files, never in MSX tape audio.
 ...
 ```
 
-Block length is implicit (ends at next header or EOF). Multiple files can be concatenated sequentially with no global directory.
+Block length is implicit—a block ends when you encounter the next CAS HEADER or reach end-of-file. Multiple files can be concatenated sequentially, making CAS images function like tape archives.
 
 ### 3.3 File Header Block
 
-Structure: CAS HEADER + TYPE MARKER (10 bytes) + FILENAME (6 bytes, space-padded)
+Every file in a CAS image starts with a file header block. This block identifies the file type and provides its name. The MSX BIOS reads this header when loading from tape to determine how to process the subsequent data blocks.
+
+**What you see in the file:**
+```
+[CAS HEADER: 8 bytes]  ← delimiter, not part of block data
+[TYPE MARKER: 10 bytes]  ← block data starts here
+[FILENAME: 6 bytes]
+```
+
+**The File Header Block contains:** TYPE MARKER (10 bytes) + FILENAME (6 bytes) = 16 bytes total
 
 **Type markers:**
 
-ASCII:
-```
-EA EA EA EA EA EA EA EA EA EA
-```
-
-BINARY:
-```
-D0 D0 D0 D0 D0 D0 D0 D0 D0 D0
-```
-
-BASIC:
-```
-D3 D3 D3 D3 D3 D3 D3 D3 D3 D3
-```
+| File Type | Marker Byte | Pattern (10 bytes) |
+|-----------|-------------|-------------------|
+| ASCII     | 0xEA        | `EA EA EA EA EA EA EA EA EA EA` |
+| BINARY    | 0xD0        | `D0 D0 D0 D0 D0 D0 D0 D0 D0 D0` |
+| BASIC     | 0xD3        | `D3 D3 D3 D3 D3 D3 D3 D3 D3 D3` |
 
 **Filename encoding:**
 
@@ -136,11 +137,19 @@ EA EA EA EA EA EA EA EA EA EA  ← ASCII marker
 
 ### 3.5 BASIC and BINARY Files
 
-Always exactly two blocks: header + data.
+Unlike ASCII files which can span multiple blocks, BASIC and BINARY files have a fixed structure: always exactly two blocks.
 
-Data block structure: Load address (2 bytes) + End address (2 bytes) + Exec address (2 bytes) + Program bytes.
+**Block 1 (File Header Block):**
+- TYPE MARKER (10 bytes): either `D0` × 10 for BINARY or `D3` × 10 for BASIC
+- FILENAME (6 bytes)
 
-Length derived from addresses. All byte values `00–FF` valid. No special meaning for `0x1A`.
+**Block 2 (Data Block):**
+- LOAD ADDRESS (2 bytes, little-endian): where to load in memory
+- END ADDRESS (2 bytes, little-endian): end of memory range
+- EXEC ADDRESS (2 bytes, little-endian): where to start execution
+- PROGRAM BYTES: the actual program code or data
+
+The data length is calculated from the addresses: `LENGTH = END_ADDRESS - LOAD_ADDRESS`. Since these are binary files, all byte values from `00` to `FF` are valid—there's no special EOF marker like ASCII's `0x1A`.
 
 **Example: BINARY file**
 
@@ -196,11 +205,13 @@ Breakdown:
 
 ## 4. MSX Tape Encoding
 
-Official MSX standard for physical audio storage.
+This section describes how MSX computers actually read and write cassette tapes. While CAS files store the logical structure, real MSX hardware converts data into audio signals that can be recorded on magnetic tape. This is the official MSX standard, independent of the CAS preservation format.
 
 ### 4.1 FSK Modulation
 
-Uses Frequency Shift Keying at 1200 baud (default) or 2400 baud.
+MSX uses Frequency Shift Keying (FSK) to convert digital bits into audio tones. Each bit value is represented by a specific frequency, allowing ordinary cassette recorders to store computer data.
+
+Supported baud rates: 1200 baud (default) or 2400 baud.
 
 **Common WAV conversion settings** (not part of MSX standard, but work well):
 - Sample rate: 43200 Hz
@@ -210,6 +221,8 @@ Uses Frequency Shift Keying at 1200 baud (default) or 2400 baud.
 These parameters are commonly used for CAS-to-WAV conversion because 43200 Hz divides evenly into both 1200 Hz and 2400 Hz frequencies. Other settings can work as long as they accurately reproduce the FSK tones.
 
 ### 4.2 Bit Encoding
+
+The MSX represents 0-bits and 1-bits using different audio frequencies. Each bit occupies a fixed time slot, but uses a different number of wave cycles depending on its value.
 
 Each bit has a fixed time duration. During that time, different frequencies are used:
 
@@ -230,7 +243,9 @@ So at 1200 baud: 0-bit = 36 samples, 1-bit = 36 samples (2×18)
 
 ### 4.3 Serial Framing
 
-START (0-bit) + 8 DATA bits (LSB first) + 2 STOP (1-bits) = 11 bits/byte
+Each byte is transmitted with start and stop bits, similar to RS-232 serial communication. This framing allows the receiving hardware to synchronize on byte boundaries.
+
+**Frame structure:** START (0-bit) + 8 DATA bits (LSB first) + 2 STOP (1-bits) = 11 bits/byte
 
 Timing at 1200 baud: ~9.17 ms per byte (~109 bytes/sec)
 
@@ -273,7 +288,9 @@ One 1200 Hz cycle for START, then twenty 2400 Hz cycles for the 1-bits.
 
 ### 4.4 Sync and Silence
 
-Before each block: silence → sync pulses → data
+Before transmitting data, MSX sends periods of silence and repetitive sync pulses. These serve multiple purposes: allowing the cassette motor to stabilize, providing timing reference for baud rate detection, and acting as a carrier detection signal.
+
+**Sequence:** silence → sync pulses → data
 
 - Long silence: 2 sec (first block)
 - Short silence: 1 sec (subsequent blocks)
@@ -330,12 +347,12 @@ Total audio duration: ~13 seconds for this small file
 ```
 Initial sync (8000 1-bits):
 ┌────────────────────────────────────────────────────────────┐
-│ 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 ... (8000 times)          │
-│ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓                          │
+│ 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 ... (8000 times)           │
+│ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓                            │
 │ All transmitted as 2400 Hz pulses                          │
 │                                                            │
 │ Audio waveform:                                            │
-│ ∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿│
+│ ∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿|
 │   (continuous 2400 Hz tone for 6.67 seconds)               │
 └────────────────────────────────────────────────────────────┘
 
