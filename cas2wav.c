@@ -69,11 +69,6 @@ int main(int argc, char* argv[])
   while (pos + sizeof(HEADER) <= cas_size) {
     if (!memcmp(cas+pos, HEADER, sizeof(HEADER))) {
       /* Header found - read the 10-byte file type identifier */
-
-      /* The MSX BIOS makes a distinction between SYNC_INITIAL (initial sync)
-         and SYNC_BLOCK (inter-block sync). Using appropriate headers for each
-         type improves compatibility with real hardware tape loaders. */
-
       pos += sizeof(HEADER);
       if (pos + 10 <= cas_size) {
         FileType file_type = identifyFileType(cas+pos);
@@ -82,14 +77,15 @@ int main(int argc, char* argv[])
             /* ASCII file type: multiple data blocks with headers between them */
             writeSilence(&wb, args.silence_time);
             writeSync(&wb,SYNC_INITIAL);
+            /* Transmit first data block */
             pos = writeData(cas, cas_size, &wb, pos, &eof);
 
             /* Process subsequent data blocks until EOF or no more data */
-            do {
+            while (!eof && pos + sizeof(HEADER) <= cas_size) {
               writeSilence(&wb,SHORT_SILENCE);
               writeSync(&wb,SYNC_BLOCK);
-              pos = writeData(cas, cas_size, &wb, pos + sizeof(HEADER), &eof);
-            } while (!eof && pos < cas_size);
+              pos = writeData(cas, cas_size, &wb, pos+sizeof(HEADER), &eof);
+            }
             break;
 
           case FILE_TYPE_BINARY:
