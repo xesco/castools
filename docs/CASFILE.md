@@ -211,6 +211,9 @@ This section describes how MSX computers actually read and write cassette tapes.
 
 MSX uses Frequency Shift Keying (FSK) to convert digital bits into audio tones. Each bit value is represented by a specific frequency, allowing ordinary cassette recorders to store computer data.
 
+**Transmission:** Data is encoded as 1200 Hz or 2400 Hz tones  
+**Detection:** MSX reads the tape by measuring zero-crossing timing (see section 4.2)
+
 Supported baud rates: 1200 baud (default) or 2400 baud.
 
 **Common WAV conversion settings** (not part of MSX standard, but work well):
@@ -240,6 +243,24 @@ At 43200 Hz sample rate:
 - 4800 Hz cycle = 9 samples
 
 So at 1200 baud: 0-bit = 36 samples, 1-bit = 36 samples (2×18)
+
+**How MSX hardware actually detects bits:**
+
+The MSX doesn't directly measure frequencies. Instead, it measures the time between zero crossings (when the signal crosses zero amplitude) by counting CPU T-states. The process:
+
+1. **Wait for zero crossing** - Detect when signal crosses zero (consumes up to half a cycle)
+2. **Start timer** - Begin counting CPU T-states (cycles)
+3. **Wait for next zero crossing** - One half-cycle later
+4. **Stop timer** - End measurement (we've now consumed roughly a full cycle)
+5. **Compare with thresholds** - If time is SHORT, it's a 1-bit. If LONG, it's a 0-bit
+
+**Zero crossing intervals at 1200 baud:**
+- 1200 Hz: half-cycle = 416.7 µs = 1491 T-states (LONG = 0-bit)
+- 2400 Hz: half-cycle = 208.3 µs = 746 T-states (SHORT = 1-bit)
+
+**Key point:** Although we measure the duration of one half-cycle, we consume approximately a full cycle of signal to do so (waiting for the first zero crossing, then measuring to the next one). This is why 0-bits are 1 full cycle and 1-bits are 2 full cycles.
+
+This timing-based method is more reliable than trying to measure exact frequencies, especially with tape speed variations and analog signal degradation.
 
 ### 4.3 Serial Framing
 
@@ -288,7 +309,7 @@ One 1200 Hz cycle for START, then twenty 2400 Hz cycles for the 1-bits.
 
 ### 4.4 Sync and Silence
 
-Before transmitting data, MSX sends periods of silence and repetitive sync pulses. These serve multiple purposes: allowing the cassette motor to stabilize, providing timing reference for baud rate detection, and acting as a carrier detection signal.
+Before transmitting data, MSX sends periods of silence and repetitive sync pulses. These serve multiple purposes: allowing the cassette motor to stabilize, providing timing reference for baud rate detection (by measuring zero-crossing intervals), and acting as a carrier detection signal.
 
 **Sequence:** silence → sync pulses → data
 
@@ -309,12 +330,14 @@ File: BINARY "GAME" with 256 bytes of data
 │   86,400 samples @ 43200 Hz                                 │
 │   Purpose: Motor startup and stabilization                  │
 ├─────────────────────────────────────────────────────────────┤
-│ [8000 consecutive 1-bits at 2400 Hz]                        │
+│ [8000 consecutive 1-bits]                                   │
+│   Each 1-bit = 2 cycles of 2400 Hz                          │
+│   Total: 16,000 cycles of 2400 Hz tone                      │
 │   ~6.67 seconds of high-frequency tone                      │
 │   Purpose: Initial sync, baud detection                     │
 ├─────────────────────────────────────────────────────────────┤
 │ [10 bytes: D0 D0 D0 D0 D0 D0 D0 D0 D0 D0]                   │
-│   Each byte: START + 8 data + 2 STOP = 11 bits             │
+│   Each byte: START + 8 data + 2 STOP = 11 bits              │
 │   10 bytes × 9.17 ms = ~92 ms                               │
 ├─────────────────────────────────────────────────────────────┤
 │ [6 bytes: filename "GAME  "]                                │
@@ -328,7 +351,9 @@ File: BINARY "GAME" with 256 bytes of data
 │   43,200 samples @ 43200 Hz                                 │
 │   Purpose: Inter-block gap                                  │
 ├─────────────────────────────────────────────────────────────┤
-│ [2000 consecutive 1-bits at 2400 Hz]                        │
+│ [2000 consecutive 1-bits]                                   │
+│   Each 1-bit = 2 cycles of 2400 Hz                          │
+│   Total: 4,000 cycles of 2400 Hz tone                       │
 │   ~1.67 seconds of high-frequency tone                      │
 │   Purpose: Block sync                                       │
 ├─────────────────────────────────────────────────────────────┤
@@ -349,17 +374,19 @@ Initial sync (8000 1-bits):
 ┌────────────────────────────────────────────────────────────┐
 │ 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 ... (8000 times)           │
 │ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓                            │
-│ All transmitted as 2400 Hz pulses                          │
+│ Each 1-bit = 2 cycles of 2400 Hz                           │
+│ Total = 16,000 cycles of 2400 Hz                           │
 │                                                            │
 │ Audio waveform:                                            │
-│ ∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿|
+│ ∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿│
 │   (continuous 2400 Hz tone for 6.67 seconds)               │
+│   16,000 complete wave cycles                              │
 └────────────────────────────────────────────────────────────┘
 
 This long tone serves multiple purposes:
-1. Allows MSX to measure bit timing and auto-detect baud rate
+1. Allows MSX to measure bit timing and auto-detect baud rate (by measuring zero-crossing intervals)
 2. Provides stable reference for bit boundaries
-3. Confirms tape is playing at correct speed
+3. Confirms tape is playing at correct speed (via consistent zero-crossing timing)
 4. Acts as "carrier detect" signal
 ```
 
@@ -499,24 +526,44 @@ This confirms:
 
 ### 7.1 Parsing Algorithm
 
-```
-SEARCH_CAS_HEADER → READ TYPE MARKER → READ FILENAME → READ DATA BLOCKS
-IF ASCII: stop at first 0x1A
-IF BINARY/BASIC: read one data block
-REPEAT
-```
+To parse a CAS file, scan sequentially through the data:
+
+1. **Search for CAS HEADER** - Look for the 8-byte pattern `1F A6 DE BA CC 13 7D 74`
+2. **Read the type marker** - Next 10 bytes identify the file type (ASCII/BINARY/BASIC)
+3. **Read the filename** - Next 6 bytes contain the filename (space-padded)
+4. **Read data blocks:**
+   - **For ASCII files:** Continue reading through subsequent blocks until you encounter `0x1A` (EOF marker)
+   - **For BINARY/BASIC files:** Read exactly one more block containing addresses and program data
+5. **Repeat** from step 1 to find the next file
+
+This sequential scan is necessary because CAS files have no directory or table of contents.
 
 ### 7.2 Common Mistakes
 
-❌ Treating CAS headers as data | ❌ Mixing CAS parsing with audio | ❌ Expecting length fields | ❌ Treating 0x1A as structural
+**Treating CAS headers as data**  
+The 8-byte CAS HEADER is a structural delimiter, not part of the file content. Don't include it when extracting file data.
 
-### 7.3 Limits
+**Mixing CAS parsing with audio encoding**  
+CAS files contain logical structure only. Don't try to interpret them as audio samples or look for FSK encoding—that's only in WAV files.
 
-Filename: 6 bytes | Block alignment: 8 bytes | Load time (1200 baud): 1KB ~10 sec, 16KB ~2.5 min
+**Expecting length fields**  
+CAS blocks have no length headers. ASCII files end at `0x1A`, BINARY/BASIC files use address ranges to determine length.
 
-### 7.4 Scope
+**Treating 0x1A as structural**  
+The `0x1A` byte is meaningful only for ASCII files as an EOF marker. In BINARY/BASIC files, `0x1A` is just normal data with no special meaning.
 
-Covers MSX standard and CAS preservation. Out of scope: turbo loaders, compressed formats, custom BIOS.
+### 7.3 Practical Limits
+
+**Filename length:** Exactly 6 bytes (shorter names are space-padded on the right)
+
+**Block alignment:** CAS HEADER is 8 bytes, providing natural alignment for most architectures
+
+**Loading time at 1200 baud:**
+- 1 KB file: approximately 10 seconds
+- 16 KB file: approximately 2.5 minutes
+- These times include sync pulses and inter-block gaps
+
+**Memory constraints:** MSX systems typically have 8-64 KB of RAM, so most files are small by modern standards.
 
 ---
 
