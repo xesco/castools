@@ -37,13 +37,13 @@ A definitive, implementation-grade description of the MSX cassette system and th
 
 ## 1. Introduction
 
-The MSX cassette system was designed as a robust, timing-based storage protocol for unreliable analog tape.
-The CAS file format is a lossless digital container that preserves the logical tape block structure without encoding audio timing.
+The MSX standard defines a robust, timing-based cassette tape storage protocol for unreliable analog media.
+The CAS file format is a **community-created preservation container** that stores the logical tape block structure without audio timing, enabling digital archival of MSX cassette software.
 
 **This document defines:**
 
-- The CAS container format
-- The MSX cassette audio protocol
+- The CAS container format (hobbyist preservation standard)
+- The MSX cassette tape protocol (official MSX standard)
 - The exact semantics of ASCII, BASIC, and BINARY files
 - How real MSX hardware and BIOS routines interpret data
 
@@ -53,21 +53,23 @@ The CAS file format is a lossless digital container that preserves the logical t
 
 ## 2. Conceptual Model (Layer Separation)
 
-The MSX cassette system has two strictly separate layers:
+The MSX standard defines the physical tape encoding protocol. The CAS file format is a **community-created preservation format** developed by hobbyists to digitally preserve cassette tape data without the audio layer.
 
 ```
 +-------------------------------+
-| Logical / Container Layer     |  → CAS files
+| CAS Container Format          |  → Community preservation format
+| (Hobbyist creation)           |     Stores logical structure only
 +-------------------------------+
-| Physical / Signal Layer       |  → Tape or WAV audio
+| MSX Tape Encoding Protocol    |  → Official MSX standard
+| (Official standard)           |     Audio signal on physical tape
 +-------------------------------+
 ```
 
 ### Fundamental Rule
 
-- **CAS describes structure**
-- **Audio describes timing**
-- **They must never be mixed**
+- **MSX tape encoding** is the official standard (audio/timing)
+- **CAS file format** is a preservation container (structure only)
+- **They represent different layers** and must not be confused
 
 ---
 
@@ -95,6 +97,8 @@ Semantic end of ASCII data (`0x1A`).
 
 ## 4. CAS File Format
 
+**CAS is a community-created preservation format**, not part of the MSX standard. It digitally preserves the logical structure of MSX cassette tapes.
+
 A CAS file is a linear sequence of blocks.
 
 **There is:**
@@ -118,10 +122,10 @@ Every block begins with the same 8-byte header:
 
 **This marker:**
 
-- ✅ exists only in CAS files
-- ✅ never appears in audio
-- ✅ is not data
-- ✅ marks the start of a block
+- ✅ exists only in CAS files (preservation format)
+- ✅ never appears in MSX tape audio (actual standard)
+- ✅ is not data, just a container delimiter
+- ✅ marks the start of a block in the CAS file
 
 ---
 
@@ -172,7 +176,8 @@ MULTI-FILE CAS
 
 - Each file starts with its own header block (type marker + filename)
 - Files are stored sequentially with no separator or index
-- The BIOS CLOAD command reads files by scanning forward for matching filenames
+- The MSX BIOS CLOAD command (standard) reads from tape by scanning for filenames
+- CAS format preserves this structure digitally
 - No global directory or file count exists
 - Files are distinguished only by their type marker and name in the header block
 
@@ -393,14 +398,16 @@ The analyzed CAS file contains four files:
 
 ## 12. Physical Tape Encoding (Audio Layer)
 
-MSX uses **FSK (Frequency Shift Keying)**.
+**This is the official MSX standard.** CAS files do not contain this encoding—they only preserve the logical structure.
 
-**Supported baud rates:**
+MSX tape encoding uses **FSK (Frequency Shift Keying)**.
+
+**MSX standard baud rates:**
 
 - 1200 baud (default)
 - 2400 baud
 
-**Standard WAV encoding parameters:**
+**Standard WAV encoding parameters** (for CAS-to-WAV conversion):
 
 - Sample rate: **43200 Hz**
 - Bit depth: 8-bit unsigned PCM
@@ -624,24 +631,31 @@ This table maps CAS file structure to the corresponding MSX BIOS operations:
 
 ## 19. CAS vs WAV Relationship
 
-**CAS (container)**
+**CAS (preservation format - community creation)**
 ```
 [CAS HEADER][BLOCK]
 [CAS HEADER][BLOCK]
 ```
+- Stores logical structure only
+- No timing, no audio encoding
+- Digital preservation container
 
-**WAV / Tape (audio)**
+**WAV / Physical Tape (MSX standard)**
 ```
 [silence]
 [sync pulses]
 [data pulses]
 ```
+- Official MSX encoding protocol
+- Audio signal with precise timing
+- What MSX hardware actually reads/writes
 
-### Rules
+### Separation Rules
 
-- ✅ CAS headers never appear in audio
-- ✅ Audio sync never appears in CAS
-- ✅ CAS contains no timing information
+- ✅ CAS HEADER markers exist only in preservation files
+- ✅ Audio sync/silence exists only in MSX tape encoding
+- ✅ CAS contains structure; tape contains timing
+- ✅ They represent different layers and must not be confused
 
 ---
 
@@ -744,10 +758,10 @@ These require custom loaders and are not MSX standard.
 
 ## Final Statement
 
-> **CAS is a structural container.**  
-> **Tape is a timing protocol.**  
-> **EOF is semantic, not structural.**  
-> **Correct tools must respect this separation.**
+> **CAS is a community preservation format (not MSX standard).**  
+> **MSX tape encoding is the official standard (audio/timing).**  
+> **CAS preserves structure; tape encodes timing.**  
+> **They are separate concepts that must not be confused.**
 
 ---
 
