@@ -44,50 +44,54 @@ The MSX standard defines a cassette tape storage protocol using audio encoding. 
 
 ## 3. CAS File Format
 
-A linear sequence of blocks with no directory, global header, or length fields.
+A CAS file is a sequential container that can hold multiple files of different types (ASCII, BASIC, BINARY). Each file consists of one or more data blocks. Both files and their individual blocks are separated by CAS HEADER delimiters—an 8-byte marker that allows parsers to locate boundaries within the stream.
 
-### 3.1 Block Delimiter (CAS HEADER)
+**CAS HEADER Structure and Alignment:**
 
-The CAS HEADER is a magic number that marks the start of each block in the file. It allows parsers to reliably locate block boundaries without needing length fields.
+The CAS HEADER is always 8 bytes (`1F A6 DE BA CC 13 7D 74`) and block data must be 8-byte aligned, which means CAS HEADERs are also placed at 8-byte aligned offsets (0, 8, 16, 24, ...).
 
-Every block begins with this 8-byte marker: `1F A6 DE BA CC 13 7D 74`
-
-This delimiter was invented by the community for the CAS preservation format. It exists only in CAS files, never in MSX tape audio.
-
-### 3.2 File Structure
-
-A CAS file is organized as a sequence of blocks, each preceded by a CAS HEADER. There is no table of contents or directory—you must scan through the file sequentially to find what's inside.
+Every file begins with a file header block that identifies the file type (ASCII, BASIC, or BINARY) and provides its 6-character filename. This header block is followed by one or more data blocks containing the actual file content.
 
 ```
-[CAS HEADER] [BLOCK PAYLOAD]
-[CAS HEADER] [BLOCK PAYLOAD]
-...
+┌─────────────────────────────────────────────────┐
+│                   CAS FILE                      │
+├─────────────────────────────────────────────────┤
+│ [CAS HEADER] ← File 1 header block              │
+│ [File Header: type + name]                      │
+│                                                 │
+│ [CAS HEADER] ← File 1 data block 1              │
+│ [Data ...]                                      │
+│                                                 │
+│ [CAS HEADER] ← File 1 data block 2              │
+│ [Data ...]                                      │
+│                                                 │
+│ [CAS HEADER] ← File 2 header block              │
+│ [File Header: type + name]                      │
+│                                                 │
+│ [CAS HEADER] ← File 2 data block 1              │
+│ [Data ...]                                      │
+│                                                 │
+│ ... more files ...                              │
+└─────────────────────────────────────────────────┘
 ```
 
-Block length is implicit—a block ends when you encounter the next CAS HEADER or reach end-of-file. Multiple files can be concatenated sequentially, making CAS images function like tape archives.
+The format has no directory structure, global header, or length fields. You must scan sequentially through the file, reading each HEADER to discover what follows.
 
-### 3.3 File Header Block
+### 3.1 File Header Block
 
-Every file in a CAS image starts with a file header block. This block identifies the file type and provides its name. The MSX BIOS reads this header when loading from tape to determine how to process the subsequent data blocks.
+Every file in a CAS image starts with a file header block. This block identifies the file type using a **type marker** and provides its name. The MSX BIOS reads this header when loading from tape to determine how to process the subsequent data blocks.
 
-**What you see in the file:**
+**Type Markers:**
+
 ```
-[CAS HEADER: 8 bytes]  ← delimiter, not part of block data
-[TYPE MARKER: 10 bytes]  ← block data starts here
-[FILENAME: 6 bytes]
-```
-
-**The File Header Block contains:** TYPE MARKER (10 bytes) + FILENAME (6 bytes) = 16 bytes total
-
-**Type markers:**
-
 | File Type | Marker Byte | Pattern (10 bytes) |
-|-----------|-------------|-------------------|
+|-----------|-------------|--------------------|
 | ASCII     | 0xEA        | `EA EA EA EA EA EA EA EA EA EA` |
 | BINARY    | 0xD0        | `D0 D0 D0 D0 D0 D0 D0 D0 D0 D0` |
 | BASIC     | 0xD3        | `D3 D3 D3 D3 D3 D3 D3 D3 D3 D3` |
+```
 
-**Filename encoding:**
+**Filename Encoding:**
 
 Filenames are exactly 6 bytes, space-padded. Example "HELLO":
 ```
@@ -95,63 +99,281 @@ Filenames are exactly 6 bytes, space-padded. Example "HELLO":
 H  E  L  L  O  (space)
 ```
 
-### 3.4 ASCII Files
-
-May span multiple blocks. End logically at first `0x1A` byte (EOF marker). Data after EOF is ignored. ASCII files cannot contain `0x1A` as valid content.
-
-**Example: Single-block ASCII file**
+**Putting It All Together**
 
 ```
-Offset  Hex                                                   ASCII
-------  ----------------------------------------------------  -----
-0x0000  1F A6 DE BA CC 13 7D 74                              [CAS HEADER]
-0x0008  EA EA EA EA EA EA EA EA EA EA                        [ASCII marker]
-0x0012  52 45 41 44 4D 45                                    README
-0x0018  54 68 69 73 20 69 73 20 61 20 74 65 73 74 0D 0A    This is a test..
-0x0028  46 69 6C 65 20 63 6F 6E 74 65 6E 74 2E 0D 0A 1A    File content...
-0x0038  00 00 00 00 00                                       [padding/ignored]
+Offset  Bytes  Content                                    Description
+------  -----  -----------------------------------------  --------------------------
+0x0000  8      1F A6 DE BA CC 13 7D 74                    CAS HEADER (delimiter)
+0x0008  10     EA/D0/D3 (repeated 10 times)               Type marker
+0x0012  6      ASCII characters (space-padded)            Filename
+------  -----  -----------------------------------------  --------------------------
+Total:  24 bytes
+
+Structure:
+┌────────────────────────────────────────────────┐
+│            FILE HEADER BLOCK                   │
+├────────────────────────────────────────────────┤
+│ [CAS HEADER: 8 bytes]                          │
+│   1F A6 DE BA CC 13 7D 74                      │
+│   ↑ Not part of block data                     │
+├────────────────────────────────────────────────┤
+│ [TYPE MARKER: 10 bytes] ← ONE OF:              │
+│   EA EA EA EA EA EA EA EA EA EA  (ASCII)       │
+│   D0 D0 D0 D0 D0 D0 D0 D0 D0 D0  (BINARY)      │
+│   D3 D3 D3 D3 D3 D3 D3 D3 D3 D3  (BASIC)       │
+│   ↑ Block data starts here                     │
+├────────────────────────────────────────────────┤
+│ [FILENAME: 6 bytes]                            │
+│   Space-padded ASCII                           │
+└────────────────────────────────────────────────┘
 ```
 
-Breakdown:
-- `1F A6 DE BA CC 13 7D 74` - CAS HEADER
-- `EA` × 10 - ASCII type marker
-- `52 45 41 44 4D 45` - Filename "README"
-- Text content follows
-- `1A` - EOF marker (first occurrence terminates file)
-- Everything after `1A` is ignored
+### 3.2 ASCII Files
+
+ASCII files have a flexible structure and can span multiple blocks. Unlike BINARY and BASIC files which always use exactly two blocks, ASCII files can have as many data blocks as needed to store their content.
+
+**Block Size:**
+
+ASCII data blocks are typically 256 bytes each. When creating CAS files, text is divided into 256-byte chunks. The last block must contain at least one EOF marker, and is padded to 256 bytes with `0x1A` bytes. If the text length is a multiple of 256, an additional block containing only `0x1A` padding is required.
+
+**End-of-File Detection:**
+
+ASCII files use the byte `0x1A` (decimal 26) as an EOF marker. When the MSX reads an ASCII file, it stops reading at the first occurrence of this byte, treating it as the logical end of the file. 
+
+**What happens after EOF:**
+- Data after the `0x1A` marker within the same file is ignored (padding, garbage data)
+- A CAS HEADER after the EOF marker may signal the start of a **new file** (not continuation of the current ASCII file)
+
+**Important limitation:** Because `0x1A` serves as the EOF marker, ASCII files cannot contain this byte as part of their actual content. This is only a restriction for ASCII files—BINARY and BASIC files can include `0x1A` as regular data since they don't use an EOF marker.
 
 **Example: Multi-block ASCII file**
 
 ```
-[CAS HEADER]
-EA EA EA EA EA EA EA EA EA EA  ← ASCII marker
-4D 59 46 49 4C 45              ← filename "MYFILE"
-[large text content with no 0x1A]
-
-[CAS HEADER]
-[continuation of text content]
-[more text]
-1A                             ← EOF marker in second block
-[ignored padding]
+┌────────────────────────────────────────────────────────────────┐
+│ ASCII FILE: "README" spanning 3 blocks                         │
+├────────────────────────────────────────────────────────────────┤
+│ BLOCK 1: File Header Block                                     │
+├────────────────────────────────────────────────────────────────┤
+│ Offset: 0x0000                                                 │
+│ [CAS HEADER: 8 bytes]                                          │
+│   1F A6 DE BA CC 13 7D 74                                      │
+│ [TYPE MARKER: 10 bytes]                                        │
+│   EA EA EA EA EA EA EA EA EA EA                                │
+│ [FILENAME: 6 bytes]                                            │
+│   52 45 41 44 4D 45                                            │
+│   "README"                                                     │
+└────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│ BLOCK 2: First Data Block                                      │
+├────────────────────────────────────────────────────────────────┤
+│ Offset: 0x0018                                                 │
+│ [CAS HEADER: 8 bytes]                                          │
+│   1F A6 DE BA CC 13 7D 74                                      │
+│ [DATA: ~256 bytes of text content]                             │
+│   54 68 69 73 20 69 73 20 61 20 6C 6F 6E 67 20 74 ...          │
+│   "This is a long text file that spans multiple..."            │
+│   "blocks. It contains documentation about the..."             │
+│   "MSX cassette tape format. Since this content..."            │
+│   ... (no 0x1A EOF marker in this block)                       │
+└────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│ BLOCK 3: Second Data Block (with EOF)                          │
+├────────────────────────────────────────────────────────────────┤
+│ Offset: 0x0120                                                 │
+│ [CAS HEADER: 8 bytes]                                          │
+│   1F A6 DE BA CC 13 7D 74                                      │
+│ [DATA: continuation]                                           │
+│   2E 2E 2E 63 6F 6E 74 69 6E 75 65 73 20 68 65 72 ...          │
+│   "...continues here with more text content."                  │
+│   "This is the end of the file."                               │
+│ [EOF MARKER: 1 byte]                                           │
+│   1A                  ← File ends here logically               │
+│ [PADDING: ignored]                                             │
+│   00 00 00 00 ...     ← Everything after EOF ignored           │
+└────────────────────────────────────────────────────────────────┘
 ```
 
-### 3.5 BASIC and BINARY Files
+**Key points:**
+- File header block identifies type (EA) and name ("README")
+- Data blocks contain actual text content
+- No EOF marker in first data block → continue reading
+- EOF marker (0x1A) in second data block → stop reading
+- Any data after EOF is ignored (padding, garbage)
+- If another CAS HEADER appears, check if it starts a NEW file
+  (has type marker + filename) or is just part of padding
 
-Unlike ASCII files which can span multiple blocks, BASIC and BINARY files have a fixed structure: always exactly two blocks.
 
-**Block 1 (File Header Block):**
-- TYPE MARKER (10 bytes): either `D0` × 10 for BINARY or `D3` × 10 for BASIC
-- FILENAME (6 bytes)
+### 3.3 BASIC and BINARY Files
 
-**Block 2 (Data Block):**
-- LOAD ADDRESS (2 bytes, little-endian): where to load in memory
-- END ADDRESS (2 bytes, little-endian): end of memory range
-- EXEC ADDRESS (2 bytes, little-endian): where to start execution
-- PROGRAM BYTES: the actual program code or data
+BASIC and BINARY files have a fixed, predictable structure. Unlike ASCII files which can span multiple blocks, these files always consist of exactly two blocks: one file header block and one data block.
 
-The data length is calculated from the addresses: `LENGTH = END_ADDRESS - LOAD_ADDRESS`. Since these are binary files, all byte values from `00` to `FF` are valid—there's no special EOF marker like ASCII's `0x1A`.
+**Structure:**
 
-**Example: BINARY file**
+Both file types follow this pattern:
+- **Block 1:** File header block (type marker + filename)
+- **Block 2:** Data block (addresses + program bytes)
+
+**Data Block Format:**
+
+The data block begins with a 6-byte **data header** containing three 16-bit addresses (little-endian), followed by the program data:
+- **LOAD ADDRESS** (2 bytes): Memory address where data will be loaded
+- **END ADDRESS**  (2 bytes): Memory address marking the end of the data range
+- **EXEC ADDRESS** (2 bytes): Memory address where execution begins (for BLOAD with ,R)
+
+**Data Length Calculation:**
+
+The addresses in the data header tell us how much program data to expect:
+```
+PROGRAM_DATA_LENGTH = END_ADDRESS - LOAD_ADDRESS
+```
+
+For example: Load=0xC000, End=0xC200 → 512 bytes (0x200) of program data
+
+**Important:** This length tells you how many bytes of program data follow the data header. 
+
+**Parsing approach:** Since BINARY/BASIC files always have exactly 2 blocks (file header + data block), and the address calculation tells you the program data length, after reading the data header and the calculated number of program data bytes, the file is complete. 
+
+Whether there's padding after the program data depends on how the CAS file was created. The next CAS HEADER you encounter will start a NEW file (not part of the current file). You must scan forward from your current position to locate that next CAS HEADER—it could be immediately after the program data, or there might be some padding bytes in between.
+
+**No EOF Marker:**
+
+Since these are binary files, all byte values from `0x00` to `0xFF` are valid data. There's no special EOF marker like ASCII's `0x1A`—the addresses define exactly where the data ends.
+
+**File ID Bytes:**
+
+When BINARY and BASIC files are stored on disk (e.g., in MSX-DOS), they include a 1-byte file ID prefix:
+- **BINARY files:** `0xFE` prefix byte (not present in CAS format)
+- **BASIC files:**  `0xFF` prefix byte (not present in CAS format)
+
+These ID bytes are **NOT** stored in CAS files—they belong to the disk file format. When extracting BINARY files from CAS, tools typically add the `0xFE` prefix to match the disk format. When adding BINARY/BASIC files to a CAS, tools automatically strip these prefix bytes if present.
+
+**BINARY File Validation:**
+
+When creating or reading BINARY files, implementations should validate:
+1. Data block is at least 6 bytes (minimum for address header)
+2. `LOAD_ADDRESS ≤ END_ADDRESS` (begin must not exceed end)
+3. `END_ADDRESS - LOAD_ADDRESS` ≤ actual program data size
+4. `LOAD_ADDRESS ≤ EXEC_ADDRESS ≤ END_ADDRESS` (execution address must be within range)
+
+**BASIC File Validation:**
+
+BASIC files must be at least 2 bytes (minimal tokenized program structure).
+
+**Example: BINARY file structure**
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ BINARY FILE: "LOADER" with 512 bytes of Z80 code              │
+├────────────────────────────────────────────────────────────────┤
+│ BLOCK 1: File Header Block                                     │
+├────────────────────────────────────────────────────────────────┤
+│ Offset: 0x0000                                                 │
+│                                                                │
+│ [CAS HEADER: 8 bytes]                                          │
+│   1F A6 DE BA CC 13 7D 74                                      │
+│                                                                │
+│ [TYPE MARKER: 10 bytes]                                        │
+│   D0 D0 D0 D0 D0 D0 D0 D0 D0 D0                                │
+│   (BINARY marker)                                              │
+│                                                                │
+│ [FILENAME: 6 bytes]                                            │
+│   4C 4F 41 44 45 52                                            │
+│   "LOADER"                                                     │
+└────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────┐
+│ BLOCK 2: Data Block                                            │
+├────────────────────────────────────────────────────────────────┤
+│ Offset: 0x0018                                                 │
+│                                                                │
+│ [CAS HEADER: 8 bytes]                                          │
+│   1F A6 DE BA CC 13 7D 74                                      │
+│                                                                │
+│ [DATA HEADER: 6 bytes]                                         │
+│   00 C0                   LOAD ADDRESS → 0xC000                │
+│   00 C2                   END ADDRESS  → 0xC200                │
+│   00 C0                   EXEC ADDRESS → 0xC000                │
+│   Length = 0xC200 - 0xC000 = 512 bytes                        │
+│                                                                │
+│ [PROGRAM DATA: 512 bytes]                                      │
+│   21 00 C0 CD 00 00 C9 ...                                     │
+│   (Z80 machine code)                                           │
+└────────────────────────────────────────────────────────────────┘
+
+Key points:
+- Exactly 2 blocks, no more, no less
+- Block 1: Identifies file type (D0 for BINARY) and name
+- Block 2: Contains addresses and all program data
+- Data length determined by END_ADDRESS - LOAD_ADDRESS
+- All bytes (including 0x1A) are valid data
+- After reading 2nd block, file is complete → next CAS HEADER
+  starts a NEW file (if present)
+```
+
+**Example: BASIC file structure**
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ BASIC FILE: "GAME  " with tokenized BASIC program             │
+├────────────────────────────────────────────────────────────────┤
+│ BLOCK 1: File Header Block                                     │
+├────────────────────────────────────────────────────────────────┤
+│ Offset: 0x0000                                                 │
+│                                                                │
+│ [CAS HEADER: 8 bytes]                                          │
+│   1F A6 DE BA CC 13 7D 74                                      │
+│                                                                │
+│ [TYPE MARKER: 10 bytes]                                        │
+│   D3 D3 D3 D3 D3 D3 D3 D3 D3 D3                                │
+│   (BASIC marker)                                               │
+│                                                                │
+│ [FILENAME: 6 bytes]                                            │
+│   47 41 4D 45 20 20                                            │
+│   "GAME  " (space-padded)                                      │
+└────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────┐
+│ BLOCK 2: Data Block                                            │
+├────────────────────────────────────────────────────────────────┤
+│ Offset: 0x0018                                                 │
+│                                                                │
+│ [CAS HEADER: 8 bytes]                                          │
+│   1F A6 DE BA CC 13 7D 74                                      │
+│                                                                │
+│ [DATA HEADER: 6 bytes]                                         │
+│   00 80                   LOAD ADDRESS → 0x8000                │
+│   1A 81                   END ADDRESS  → 0x811A                │
+│   00 80                   EXEC ADDRESS → 0x8000                │
+│   Length = 0x811A - 0x8000 = 282 bytes                        │
+│                                                                │
+│ [BASIC PROGRAM: 282 bytes in tokenized format]                │
+│                                                                │
+│   Line 10:                                                     │
+│   00 00 0A 00             [Line header: next=0x0000, num=10]  │
+│   91 20 22 48 65 6C 6C 6F 22                                   │
+│   (PRINT token 0x91) + " \"Hello\""                            │
+│   00                      [Line terminator]                    │
+│                                                                │
+│   Line 20:                                                     │
+│   14 00 14 00             [Line header: next=0x0014, num=20]  │
+│   81                      (END token 0x81)                     │
+│   00                      [Line terminator]                    │
+│                                                                │
+│   00 00                   [Program end marker]                 │
+└────────────────────────────────────────────────────────────────┘
+
+Key points:
+- BASIC programs are stored in tokenized format, not ASCII text
+- Keywords (PRINT, END, FOR, etc.) become single-byte tokens
+- Tokens: 0x91 = PRINT, 0x81 = END, 0x8F = FOR, etc.
+- Line numbers stored as binary values in line headers
+- Each line ends with 0x00 terminator
+- Program ends with 0x00 0x00 marker
+- Even if program contains 0x1A byte, it's treated as data, not EOF
+```
+
+**Complete hex dump: BINARY file**
 
 ```
 Offset  Hex                                                   ASCII
@@ -159,22 +381,22 @@ Offset  Hex                                                   ASCII
 0x0000  1F A6 DE BA CC 13 7D 74                              [CAS HEADER]
 0x0008  D0 D0 D0 D0 D0 D0 D0 D0 D0 D0                        [BINARY marker]
 0x0012  4C 4F 41 44 45 52                                    LOADER
+        ^^^^^^^^^^^^^^^^^^^^^^^^  File header block complete
+
 0x0018  1F A6 DE BA CC 13 7D 74                              [CAS HEADER]
-0x0020  00 C0                                                [Load: 0xC000]
-0x0022  FF C1                                                [End: 0xC1FF]
-0x0024  00 C0                                                [Exec: 0xC000]
-0x0026  21 00 C0 CD 00 00 C9                                 [Program bytes]
-        ^^^^^^^^^^^^^^^^^^^
-        Z80 code: LD HL,0xC000 / CALL 0x0000 / RET
+0x0020  00 C0                                                Load: 0xC000
+0x0022  00 C2                                                End:  0xC200
+0x0024  00 C0                                                Exec: 0xC000
+        ^^^^^^  Length = 0xC200 - 0xC000 = 512 bytes
+
+0x0026  21 00 C0                                             LD HL,0xC000
+0x0029  CD 00 00                                             CALL 0x0000
+0x002C  C9                                                   RET
+0x002D  ... [505 more bytes of Z80 code]
+        ^^^^^^^^^^^^^^^^^^^^^^^^  Data block complete, file complete
 ```
 
-Breakdown:
-- Block 1 (header): CAS HEADER + `D0` × 10 + "LOADER"
-- Block 2 (data): CAS HEADER + addresses + code
-- Load at 0xC000, End at 0xC1FF → 512 bytes (0x200)
-- Execute from 0xC000
-
-**Example: BASIC file**
+**Complete hex dump: BASIC file**
 
 ```
 Offset  Hex                                                   ASCII
@@ -182,24 +404,23 @@ Offset  Hex                                                   ASCII
 0x0000  1F A6 DE BA CC 13 7D 74                              [CAS HEADER]
 0x0008  D3 D3 D3 D3 D3 D3 D3 D3 D3 D3                        [BASIC marker]
 0x0012  47 41 4D 45 20 20                                    GAME  
-0x0018  1F A6 DE BA CC 13 7D 74                              [CAS HEADER]
-0x0020  00 80                                                [Load: 0x8000]
-0x0022  1A 81                                                [End: 0x811A]
-0x0024  00 80                                                [Exec: 0x8000]
-0x0026  00 00 0A 00                                          [BASIC line header]
-0x002A  91 20 22 48 65 6C 6C 6F 22                           PRINT "Hello"
-0x0033  00                                                   [Line terminator]
-0x0034  14 00 14 00                                          [Next line: 20]
-0x0038  81                                                   [Token: END]
-0x0039  00                                                   [Line terminator]
-0x003A  00 00                                                [Program end]
-```
+        ^^^^^^^^^^^^^^^^^^^^^^^^  File header block complete
 
-Breakdown:
-- Block 1: CAS HEADER + `D3` × 10 + "GAME  "
-- Block 2: CAS HEADER + load/end/exec addresses + BASIC program in tokenized format
-- `91` = PRINT token, `81` = END token
-- BASIC uses internal format, not ASCII text
+0x0018  1F A6 DE BA CC 13 7D 74                              [CAS HEADER]
+0x0020  00 80                                                Load: 0x8000
+0x0022  1A 81                                                End:  0x811A
+0x0024  00 80                                                Exec: 0x8000
+        ^^^^^^  Length = 0x811A - 0x8000 = 282 bytes
+
+0x0026  00 00 0A 00                                          Line 10 header
+0x002A  91 20 22 48 65 6C 6C 6F 22                           PRINT "Hello"
+0x0033  00                                                   Line end
+0x0034  14 00 14 00                                          Line 20 header
+0x0038  81                                                   END token
+0x0039  00                                                   Line end
+0x003A  00 00                                                Program end
+        ^^^^^^^^^^^^^^^^^^^^^^^^  Data block complete, file complete
+```
 
 ---
 
@@ -554,11 +775,16 @@ The `0x1A` byte is meaningful only for ASCII files as an EOF marker. In BINARY/B
 
 ### 7.3 Practical Limits
 
-**Filename length:** Exactly 6 bytes (shorter names are space-padded on the right)
+**Filename length:** Exactly 6 bytes. Longer names are automatically truncated. Shorter names are space-padded on the right (0x20). Names with fewer than 6 printable characters are right-padded with spaces. When extracting files, trailing spaces and null bytes are stripped.
 
-**Block alignment:** CAS HEADER is 8 bytes, providing natural alignment for most architectures
+**Filename character support:** ASCII characters only. The format treats filenames as 6-byte ASCII arrays. Characters outside printable ASCII range may cause issues.
 
-**Loading time at 1200 baud:**
+**Block alignment:** Block data must be 8-byte aligned, which means CAS HEADERs (being 8 bytes) must be placed at 8-byte aligned offsets (0, 8, 16, 24, ...). When creating CAS files, data blocks are padded with:
+- **BINARY/BASIC files:** Zero bytes (0x00) for 8-byte alignment
+- **ASCII files:** EOF bytes (0x1A) for 256-byte alignment
+- **Custom blocks:** Zero bytes (0x00) for 8-byte alignment
+
+**Loading time at 1200 baud:
 - 1 KB file: approximately 10 seconds
 - 16 KB file: approximately 2.5 minutes
 - These times include sync pulses and inter-block gaps
