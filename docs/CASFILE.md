@@ -225,9 +225,7 @@ These parameters are commonly used for CAS-to-WAV conversion because 43200 Hz di
 
 ### 4.2 Bit Encoding
 
-The MSX represents 0-bits and 1-bits using different audio frequencies. Each bit occupies a fixed time slot, but uses a different number of wave cycles depending on its value.
-
-Each bit has a fixed time duration. During that time, different frequencies are used:
+Each bit has a fixed time duration, but uses different frequencies (different numbers of wave cycles):
 
 **1200 baud** (each bit = 833.3 µs):
 - **0-bit:** 1 cycle at 1200 Hz (takes full 833.3 µs)
@@ -237,12 +235,14 @@ Each bit has a fixed time duration. During that time, different frequencies are 
 - **0-bit:** 1 cycle at 2400 Hz (takes full 416.7 µs)
 - **1-bit:** 2 cycles at 4800 Hz (each cycle 208.3 µs, total 416.7 µs)
 
-At 43200 Hz sample rate:
-- 1200 Hz cycle = 36 samples
-- 2400 Hz cycle = 18 samples  
-- 4800 Hz cycle = 9 samples
+**At 43200 Hz sample rate:**
 
-So at 1200 baud: 0-bit = 36 samples, 1-bit = 36 samples (2×18)
+| Baud Rate | Bit Value | Frequency   | Samples per Bit   |
+|-----------|-----------|-----------  |-------------------|
+| 1200      | 0-bit     | 1 × 1200 Hz | 36 samples        |
+| 1200      | 1-bit     | 2 × 2400 Hz | 36 samples (2×18) |
+| 2400      | 0-bit     | 1 × 2400 Hz | 18 samples        |
+| 2400      | 1-bit     | 2 × 4800 Hz | 18 samples (2×9)  |
 
 **How MSX hardware actually detects bits:**
 
