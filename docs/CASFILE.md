@@ -234,7 +234,7 @@ For example: Load=0xC000, End=0xC200 → 512 bytes (0x200) of program data
 
 **Parsing approach:** Since BINARY/BASIC files always have exactly 2 blocks (file header + data block), and the address calculation tells you the program data length, after reading the data header and the calculated number of program data bytes, the file is complete. 
 
-Whether there's padding after the program data depends on how the CAS file was created. The next CAS HEADER you encounter will start a NEW file (not part of the current file). You must scan forward from your current position to locate that next CAS HEADER—it could be immediately after the program data, or there might be some padding bytes in between.
+Whether there's padding after the program data depends on how the CAS file was created. The next CAS HEADER you encounter (if any) will start a NEW file (not part of the current file). You must scan forward from your current position to locate that next CAS HEADER—it could be immediately after the program data, or there might be some padding bytes in between.
 
 **No EOF Marker:**
 
@@ -264,7 +264,7 @@ BASIC files must be at least 2 bytes (minimal tokenized program structure).
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│ BINARY FILE: "LOADER" with 512 bytes of Z80 code              │
+│ BINARY FILE: "LOADER" with 512 bytes of Z80 code               │
 ├────────────────────────────────────────────────────────────────┤
 │ BLOCK 1: File Header Block                                     │
 ├────────────────────────────────────────────────────────────────┤
@@ -294,7 +294,7 @@ BASIC files must be at least 2 bytes (minimal tokenized program structure).
 │   00 C0                   LOAD ADDRESS → 0xC000                │
 │   00 C2                   END ADDRESS  → 0xC200                │
 │   00 C0                   EXEC ADDRESS → 0xC000                │
-│   Length = 0xC200 - 0xC000 = 512 bytes                        │
+│   Length = 0xC200 - 0xC000 = 512 bytes                         │
 │                                                                │
 │ [PROGRAM DATA: 512 bytes]                                      │
 │   21 00 C0 CD 00 00 C9 ...                                     │
@@ -315,7 +315,7 @@ Key points:
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│ BASIC FILE: "GAME  " with tokenized BASIC program             │
+│ BASIC FILE: "GAME  " with tokenized BASIC program              │
 ├────────────────────────────────────────────────────────────────┤
 │ BLOCK 1: File Header Block                                     │
 ├────────────────────────────────────────────────────────────────┤
@@ -345,18 +345,18 @@ Key points:
 │   00 80                   LOAD ADDRESS → 0x8000                │
 │   1A 81                   END ADDRESS  → 0x811A                │
 │   00 80                   EXEC ADDRESS → 0x8000                │
-│   Length = 0x811A - 0x8000 = 282 bytes                        │
+│   Length = 0x811A - 0x8000 = 282 bytes                         │
 │                                                                │
-│ [BASIC PROGRAM: 282 bytes in tokenized format]                │
+│ [BASIC PROGRAM: 282 bytes in tokenized format]                 │
 │                                                                │
 │   Line 10:                                                     │
-│   00 00 0A 00             [Line header: next=0x0000, num=10]  │
+│   00 00 0A 00             [Line header: next=0x0000, num=10]   │
 │   91 20 22 48 65 6C 6C 6F 22                                   │
 │   (PRINT token 0x91) + " \"Hello\""                            │
 │   00                      [Line terminator]                    │
 │                                                                │
 │   Line 20:                                                     │
-│   14 00 14 00             [Line header: next=0x0014, num=20]  │
+│   14 00 14 00             [Line header: next=0x0014, num=20]   │
 │   81                      (END token 0x81)                     │
 │   00                      [Line terminator]                    │
 │                                                                │
@@ -615,15 +615,15 @@ This long tone serves multiple purposes:
 
 ## 5. MSX BIOS Tape Routines
 
-| Function | Address | Purpose |
-|----------|---------|---------|
-| TAPION   | #00E1 | Read header and start motor |
-| TAPIN    | #00E4 | Read one byte |
-| TAPIOF   | #00E7 | Stop reading |
-| TAPOON   | #00EA | Write header and start motor |
-| TAPOUT   | #00ED | Write one byte |
-| TAPOOF   | #00F0 | Stop writing |
-| STMOTR   | #00F3 | Motor control |
+| Function | Address | Purpose                       |
+|----------|---------|-------------------------------|
+| TAPION   | #00E1   | Read header and start motor   |
+| TAPIN    | #00E4   | Read one byte                 |
+| TAPIOF   | #00E7   | Stop reading                  |
+| TAPOON   | #00EA   | Write header and start motor  |
+| TAPOUT   | #00ED   | Write one byte                |
+| TAPOOF   | #00F0   | Stop writing                  |
+| STMOTR   | #00F3   | Motor control                 |
 
 **Usage:** TAPION reads header, TAPIN reads bytes until error, TAPIOF stops. TAPOUT writes data with automatic serial framing and FSK encoding.
 
