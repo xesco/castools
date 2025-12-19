@@ -75,7 +75,7 @@ Every file begins with a file header block that identifies the file type and pro
 
 The format has no directory structure, global header, or length fields. You must scan sequentially through the file, reading each HEADER to discover what follows.
 
-### 3.1 File Header Block
+### 2.1 File Header Block
 
 Every file in a CAS image starts with a file header block. This block identifies the file type using a **type marker** and provides its name. The MSX BIOS reads this header when loading from tape to determine how to process the subsequent data blocks.
 
