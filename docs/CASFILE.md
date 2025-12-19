@@ -1,8 +1,8 @@
-# MSX Cassette Tape & CAS File Format
+# MSX CAS File Format Specification
 
-## Technical Specification and Reference
+## Implementation Guide and Technical Reference
 
-This document describes the MSX cassette tape protocol and CAS container format for implementation purposes. Information gathered from community knowledge, existing code implementations, and practical analysis.
+This document describes the CAS container format and MSX cassette tape encoding protocol for developers implementing tape utilities and emulators. Information gathered from community knowledge, existing code implementations, and practical analysis.
 
 ---
 
@@ -505,7 +505,7 @@ Bit sequence:
 │  Hz   │2400│2400│2400│2400│2400│2400│2400│2400│ 2400 │ 2400 │
 └───────┴────┴────┴────┴────┴────┴────┴────┴────┴──────┴──────┘
 
-One 1200 Hz cycle for START, then twenty 2400 Hz cycles for the 1-bits.
+One 1200 Hz cycle for START, then twenty 2400 Hz cycles for the ten 1-bits.
 ```
 
 ### 3.4 Sync and Silence
