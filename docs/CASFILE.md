@@ -40,15 +40,15 @@ When you play an MSX cassette tape, the computer decodes the audio back into dat
 - **BIOS interface** - How MSX hardware handles tape operations
 ---
 
-## 2. CAS File Format
+## 2. CAS File Format: general structure
 
-A CAS file is a sequential container that can hold multiple files of different types (ASCII, BASIC, BINARY). Each file consists of one or more data blocks. Both files and their individual blocks are separated by `CAS HEADER` delimiters—an 8-byte marker that allows parsers to locate boundaries within the stream.
+A CAS file is a sequential container that can hold multiple files of different types (`ASCII`, `BASIC`, `BINARY`). Each file consists of one or more data blocks. Both files and their individual blocks are separated by `CAS HEADER` delimiters—an 8-byte marker that allows parsers to locate boundaries within the stream.
 
 **CAS HEADER Structure and Alignment:**
 
 The `CAS HEADER` is always 8 bytes (`1F A6 DE BA CC 13 7D 74`) and block data must be 8-byte aligned, which means `CAS HEADER`s are also placed at 8-byte aligned offsets (0, 8, 16, 24, ...).
 
-Every file begins with a file header block that identifies the file type and provides its 6-character filename. This header block is followed by one or more data blocks containing the actual file content. This is the general structure—specific details for each file type are covered in the following sections.
+Every file begins with a file header block that identifies the file type and provides its 6-character filename. This header block is followed by one or more data blocks containing the actual file content.
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -77,9 +77,7 @@ The format has no directory structure, global header, or length fields. You must
 
 ### 2.1 File Header Block
 
-Every file in a CAS image starts with a file header block. This block identifies the file type using a **type marker** and provides its name. The MSX BIOS reads this header when loading from tape to determine how to process the subsequent data blocks.
-
-**Type Markers:**
+This block identifies the file type using a **type marker** and provides its name. The MSX BIOS reads this header when loading from tape to determine how to process the subsequent data blocks.
 
 ```
 | File Type | Marker Byte | Pattern (10 bytes)            |
@@ -128,21 +126,21 @@ Total:  24 bytes (8-byte delimiter + 16 bytes of block data)
 
 ### 2.2 ASCII Files
 
-ASCII files have a flexible structure and can span multiple blocks. Unlike BINARY and BASIC files which always use exactly two blocks, ASCII files can have as many data blocks as needed to store their content.
+`ASCII` files have a flexible structure and can span multiple blocks. Unlike `BINARY` and `BASIC` files which always use exactly two blocks, `ASCII` files can have as many data blocks as needed to store their content.
 
 **End-of-File Detection:**
 
-ASCII files use the byte `0x1A` (decimal 26) as an `EOF` marker. When the MSX reads an ASCII file, it stops reading at the first occurrence of this byte, treating it as the logical end of the file. 
+`ASCII` files use the byte `0x1A` (decimal 26) as an `EOF` marker. When the MSX reads an `ASCII` file, it stops reading at the first occurrence of this byte, treating it as the logical end of the file. 
 
 **Block Size:**
 
-ASCII data blocks are typically 256 bytes each. When creating CAS files, text is divided into 256-byte chunks. The last block must contain at least one `EOF` marker, and is padded to 256 bytes with `0x1A` bytes. If the text length is a multiple of 256, an additional block containing only `0x1A` padding is required.
+`ASCII` data blocks are typically 256 bytes each. When creating CAS files, text is divided into 256-byte chunks. The last block must contain at least one `EOF` marker, and is padded to 256 bytes with `0x1A` bytes. If the text length is a multiple of 256, an additional block containing only `0x1A` padding is required.
 
 **What happens after EOF:**
 - Data after the `0x1A` marker within the same file is ignored (padding, garbage data)
 - A `CAS HEADER` after the `EOF` marker may signal the start of a **new file** (not continuation of the current ASCII file)
 
-**Important limitation:** Because `0x1A` serves as the `EOF` marker, ASCII files cannot contain this byte as part of their actual content. This is only a restriction for ASCII files—BINARY and BASIC files can include `0x1A` as regular data since they don't use an `EOF` marker.
+**Important limitation:** Because `0x1A` serves as the `EOF` marker, ASCII files cannot contain this byte as part of their actual content. This is only a restriction for `ASCII` files—`BINARY` and `BASIC` files can include `0x1A` as regular data since they don't use an `EOF` marker.
 
 **Putting it all together**
 
@@ -237,7 +235,7 @@ For example: Load=0xC000, End=0xC200 → 512 bytes (0x200) of program data
 
 Since `BINARY/BASIC` files always have exactly 2 blocks (file header + data block), and the address calculation tells you the program data length, after reading the data header and the calculated number of program data bytes, the file is complete. 
 
-After the program data, there may be padding bytes to maintain 8-byte alignment. Since the next `CAS HEADER` must start at an 8-byte aligned offset, padding (typically zero bytes) is added if the program data doesn't end at an 8-byte boundary. To find the next file, scan forward to locate the next `CAS HEADER` at an aligned offset.
+After the program data, there may be padding bytes (`0x00`) to maintain 8-byte alignment. Since the next `CAS HEADER` must start at an 8-byte aligned offset, zero-byte padding is added if the program data doesn't end at an 8-byte boundary. To find the next file, scan forward to locate the next `CAS HEADER` at an aligned offset.
 
 **No EOF Marker:**
 
@@ -295,18 +293,6 @@ This simple check is reliable because:
 2. Load addresses starting with 0xFE/0xFF would mean loading at 0xFE00+ (BIOS area)
 3. Such high addresses are practically never used for program load addresses
 
-**BINARY File Validation:**
-
-When creating or reading BINARY files, implementations should validate:
-1. Data block is at least 6 bytes (minimum for address header)
-2. `LOAD_ADDRESS ≤ END_ADDRESS` (begin must not exceed end)
-3. `END_ADDRESS - LOAD_ADDRESS` ≤ actual program data size
-4. `LOAD_ADDRESS ≤ EXEC_ADDRESS ≤ END_ADDRESS` (execution address must be within range)
-
-**BASIC File Validation:**
-
-BASIC files must be at least 2 bytes (minimal tokenized program structure).
-
 **Putting it all together**
 
 ```
@@ -340,14 +326,16 @@ Offset: 0x0018
 ├────────────────────────────────────────────────────────────────┤
 │ [DATA HEADER: 6 bytes]                                         │
 │   00 C0                   LOAD ADDRESS → 0xC000                │
-│   00 C2                   END ADDRESS  → 0xC200                │
+│   FD C0                   END ADDRESS  → 0xC0FD                │
 │   00 C0                   EXEC ADDRESS → 0xC000                │
-│   Length = 0xC200 - 0xC000 = 512 bytes                         │
-│ [PROGRAM DATA: 512 bytes]                                      │
+│   Length = 0xC0FD - 0xC000 = 253 bytes                         │
+│ [PROGRAM DATA: 253 bytes]                                      │
 │   21 00 C0 CD 00 00 C9 ...                                     │
-│   (Z80 machine code)                                           │
+│   (Z80 machine code - 253 bytes)                               │
+│ [PADDING: 5 bytes]                                             │
+│   00 00 00 00 00 ← Zero padding for 8-byte alignment           │
+│   (6 + 253 + 5 = 264 bytes = 33 × 8)                           │
 └────────────────────────────────────────────────────────────────┘
-
 ```
 
 **Key points:**
@@ -356,6 +344,7 @@ Offset: 0x0018
 - Block 2: Contains addresses and all program data
 - Data length determined by END_ADDRESS - LOAD_ADDRESS
 - All bytes (including 0x1A) are valid data
+- Zero-byte padding (`0x00`) added if needed for 8-byte alignment
 - After reading 2nd block, file is complete → next `CAS HEADER`
   starts a NEW file (if present)
 
@@ -396,18 +385,17 @@ Offset: 0x0018
 │   Length = 0x811A - 0x8000 = 282 bytes                     │
 │                                                            │
 │ [BASIC PROGRAM: 282 bytes in tokenized format]             │
-│   (Internal tokenized format structure varies by MSX       │
-│    BASIC version and is not fully documented here)         │
+│   (Internal tokenized format structure)                    │
 └────────────────────────────────────────────────────────────┘
 
 ```
 
 **Key points:**
 - BASIC programs are stored in tokenized format, not ASCII text
-- Keywords (PRINT, END, FOR, etc.) become single-byte tokens (e.g., 0x91 = PRINT)
+- Keywords become single-byte tokens (e.g., PRINT=0x91, END=0x81, FOR=0x82)
 - Line numbers and program structure are encoded in binary format
-- Internal tokenization details vary by MSX BASIC version
 - Even if program contains 0x1A byte, it's treated as data, not `EOF`
+- Zero-byte padding (`0x00`) added if needed for 8-byte alignment
 
 
 ## 3. MSX Tape Encoding
@@ -750,9 +738,6 @@ This sequential scan is necessary because CAS files have no directory or table o
 **Treating CAS HEADERs as data**  
 The 8-byte `CAS HEADER` is a structural delimiter, not part of the file content. Don't include it when extracting file data.
 
-**Mixing CAS parsing with audio encoding**  
-CAS files contain logical structure only. Don't try to interpret them as audio samples or look for FSK encoding—that's only in WAV files.
-
 **Expecting length fields**  
 CAS blocks have no length headers. ASCII files end at `0x1A`, `BINARY/BASIC` files use address ranges to determine length.
 
@@ -770,12 +755,14 @@ The `0x1A` byte is meaningful only for ASCII files as an `EOF` marker. In `BINAR
 - **ASCII files:** `EOF` bytes (0x1A) for 256-byte alignment
 - **Custom blocks:** Zero bytes (0x00) for 8-byte alignment
 
-**Loading time at 1200 baud:
+**Loading time at 1200 baud:**
 - 1 KB file: approximately 10 seconds
 - 16 KB file: approximately 2.5 minutes
 - These times include sync pulses and inter-block gaps
 
 **Memory constraints:** MSX systems typically have 8-64 KB of RAM, so most files are small by modern standards.
+
+**Basic File length:** For BASIC files: tokenized program data must be at least 2 bytes (minimal valid program)
 
 ---
 
