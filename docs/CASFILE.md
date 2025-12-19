@@ -688,52 +688,52 @@ When creating CAS files, data blocks are padded with:
 ## 5. Glossary
 
 **ASCII file**  
-A text file stored in a CAS container. ASCII files can span multiple data blocks and are terminated by a `0x1A` (`EOF`) byte. The MSX reads ASCII files character-by-character until encountering the `EOF` marker. Common for BASIC program listings saved with `SAVE "CAS:filename",A`.
+An MSX file type for text data. Can refer to: (1) the MSX file format identified by type marker `0xEA`, or (2) how such files are stored in CAS containers (multiple data blocks terminated by `0x1A` EOF byte). Created with `SAVE "CAS:filename",A`.
 
 **Baud rate**  
-The transmission speed in bits per second. MSX cassette systems support 1200 baud (default) or 2400 baud. At 1200 baud, each bit takes 833.3 µs and approximately 109 bytes/second can be transmitted. The baud rate determines the frequency of audio pulses used in FSK encoding.
+The transmission speed in bits per second. MSX supports 1200 baud (default) or 2400 baud.
 
 **BASIC file**  
-A tokenized BASIC program stored in binary format. BASIC files always consist of exactly two blocks: a file header block and one data block. The data includes a 6-byte address header (load address, end address, and execution address) followed by the tokenized program where keywords are converted to single-byte tokens (e.g., `PRINT` becomes `0x91`). The address structure is identical to BINARY files. Loaded with the `LOAD "CAS:filename"` command, which recognizes the BASIC type marker (0xD3) and loads the tokenized program into BASIC's program area.
+A tokenized BASIC program identified by type marker `0xD3`. Consists of two blocks: file header and data block (6-byte address header + tokenized program). Keywords are converted to single-byte tokens (e.g., `PRINT` = `0x91`). Loaded with `LOAD "CAS:filename"`.
 
 **BINARY file**  
-A raw machine code program or data block stored with address information. BINARY files always consist of exactly two blocks: a file header block and one data block containing a 6-byte address header (load address, end address, and execution address) followed by the program bytes. Loaded into memory with MSX-BASIC's `BLOAD` command and optionally executed with the `,R` parameter.
+Machine code program identified by type marker `0xD0`. Consists of two blocks: file header and data block (6-byte address header + program bytes). Loaded with `BLOAD "CAS:filename"` command.
 
 **Block**  
-A unit of data in a CAS file, delimited by `CAS HEADER`s. Each block contains either file metadata (type marker and filename) or actual file content (program data, text, etc.). ASCII files can have many data blocks, while BINARY and BASIC files always have exactly one data block following their header block.
+A unit of data in a CAS file, delimited by `CAS HEADER`s. Contains either file metadata (file header block) or actual content (data block).
 
 **`CAS HEADER`**  
-An 8-byte delimiter pattern (`1F A6 DE BA CC 13 7D 74`) that marks the beginning of every block in a CAS file. These headers allow parsers to locate block boundaries by scanning for this magic number. The `CAS HEADER` is not part of the actual file data—it's purely a structural marker in the CAS container format.
+An 8-byte delimiter (`1F A6 DE BA CC 13 7D 74`) marking the start of each block in a CAS file. Structural marker only, not part of file data.
 
 **Data block**  
 A block containing the actual file content (as opposed to a file header block which contains metadata). For ASCII files, data blocks contain text. For BINARY and BASIC files, the data block contains a 6-byte address header followed by program data.
 
 **Data header**  
-The 6-byte address structure at the beginning of BINARY and BASIC data blocks. Contains three 16-bit little-endian values: load address (where data will be loaded in memory), end address (end of data range), and execution address (where to start execution with `BLOAD ...,R`). The program data length is calculated as `end_address - load_address`.
+The 6-byte address structure in `BINARY` and `BASIC` data blocks. Contains three 16-bit little-endian values: load address, end address, and execution address.
 
 **8-byte alignment**  
-A critical requirement of the CAS format: all blocks must start at offsets divisible by 8. Since `CAS HEADER`s are 8 bytes, this means they must appear at positions 0, 8, 16, 24, etc. When creating CAS files, data blocks are padded with zeros (BINARY/BASIC) or `0x1A` bytes (ASCII) to maintain this alignment.
+CAS format requirement: all blocks must start at offsets divisible by 8 (positions 0, 8, 16, 24, etc.). Data blocks are padded with zeros (`BINARY/BASIC`) or `0x1A` (`ASCII`).
 
 **File header block**  
-The first block of every file in a CAS container. Contains a 10-byte type marker (identifying the file as `ASCII`, `BASIC`, or `BINARY`) followed by a 6-byte filename. The MSX BIOS reads this block to determine how to process subsequent data blocks.
+The first block of every file in a CAS container. Contains a 10-byte type marker (`0xEA`/`0xD0`/`0xD3`) and 6-byte filename.
 
 **FSK (Frequency Shift Keying)**  
-The audio encoding method used by MSX cassette tapes to convert digital bits into audio tones. Zero bits are encoded as 1200 Hz (1 cycle per bit), while one bits are encoded as 2400 Hz (2 cycles per bit). The MSX hardware detects these frequencies by measuring the time between zero-crossings of the audio waveform.
+Audio encoding method for MSX cassette tapes. 0-bit = 1 cycle at 1200 Hz, 1-bit = 2 cycles at 2400 Hz. Detected by measuring zero-crossing intervals.
 
 **Logical EOF**  
-The semantic end of an ASCII file, marked by the first occurrence of the `0x1A` byte. When the MSX reads an ASCII file, it stops at this marker and treats any subsequent data as padding or garbage. This is distinct from structural delimiters like `CAS HEADER`s—`0x1A` has meaning only within ASCII file content.
+The end of an ASCII file, marked by the first `0x1A` byte. Data after this marker is ignored. Only meaningful for ASCII files, not structural like `CAS HEADER`s.
 
 **Serial framing**  
-The bit structure used to transmit each byte: 1 START bit (0-bit), 8 DATA bits (LSB first), and 2 STOP bits (1-bits), totaling 11 bits per byte. This is similar to RS-232 serial communication and allows the receiving hardware to synchronize on byte boundaries.
+Bit structure for transmitting bytes: 1 START bit (0) + 8 DATA bits (LSB first) + 2 STOP bits (1) = 11 bits per byte.
 
 **Sync header**  
-A sequence of consecutive 1-bits (2400 Hz pulses) transmitted before each data block to allow the MSX to detect carrier signal and synchronize timing. Initial sync (8000 1-bits, ~6.67 sec) precedes file header blocks. Block sync (2000 1-bits, ~1.67 sec) precedes data blocks. During WAV to CAS conversion, sync headers trigger insertion of `CAS HEADER` delimiters.
+Sequence of consecutive 1-bits (2400 Hz pulses) before each block for synchronization. Initial sync: 8000 1-bits (file headers). Block sync: 2000 1-bits (data blocks).
 
 **Type marker**  
-A 10-byte pattern in the file header block that identifies the file type: `0xEA` repeated 10 times for ASCII files, `0xD0` repeated 10 times for BINARY files, or `0xD3` repeated 10 times for BASIC files. This tells the MSX BIOS and CAS parsing tools how to interpret the subsequent data blocks.
+A 10-byte pattern identifying file type: `0xEA` (ASCII), `0xD0` (BINARY), or `0xD3` (BASIC), each repeated 10 times.
 
 **Zero-crossing**  
-The point where an audio waveform crosses zero amplitude (changes from positive to negative or vice versa). MSX hardware detects bits by measuring the time interval between zero-crossings: longer intervals indicate 1200 Hz (0-bit), shorter intervals indicate 2400 Hz (1-bit). This timing-based method is more reliable than frequency analysis for degraded tape signals.
+When audio waveform crosses zero amplitude. MSX detects bits by measuring intervals between crossings: longer = 1200 Hz (0-bit), shorter = 2400 Hz (1-bit).
 
 ---
 
@@ -753,13 +753,6 @@ The point where an audio waveform crosses zero amplitude (changes from positive 
 - Author: Alvaro Polo
 - Features: Create, extract, list, and export CAS files to WAV
 - License: Mozilla Public License 2.0
-
-### Technical Standards
-
-**Kansas City Standard**
-- Wikipedia: https://en.wikipedia.org/wiki/Kansas_City_standard
-- Basis for MSX tape encoding using FSK (Frequency Shift Keying)
-- MSX uses 1200 baud variation with optional 2400 baud mode
 
 ### Community Resources
 
