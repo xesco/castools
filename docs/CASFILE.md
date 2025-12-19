@@ -10,12 +10,21 @@ This document describes the MSX cassette tape protocol and CAS container format 
 
 1. [Introduction](#1-introduction)
 2. [CAS File Format](#2-cas-file-format)
+   - 2.1 [File Header Block](#21-file-header-block)
+   - 2.2 [ASCII Files](#22-ascii-files)
+   - 2.3 [BASIC and BINARY Files](#23-basic-and-binary-files)
 3. [MSX Tape Encoding](#3-msx-tape-encoding)
-4. [MSX BIOS Tape Routines](#4-msx-bios-tape-routines)
-5. [Examples and Analysis](#5-examples-and-analysis)
-6. [Implementation Guide](#6-implementation-guide)
-7. [Reference](#7-reference)
-8. [Glossary](#8-glossary)
+   - 3.1 [FSK Modulation](#31-fsk-modulation)
+   - 3.2 [Bit Encoding](#32-bit-encoding)
+   - 3.3 [Serial Framing](#33-serial-framing)
+   - 3.4 [Sync and Silence](#34-sync-and-silence)
+   - 3.5 [Mapping CAS Structure to Audio Encoding](#35-mapping-cas-structure-to-audio-encoding)
+4. [Implementation Guide](#4-implementation-guide)
+   - 4.1 [CAS to WAV Conversion](#41-cas-to-wav-conversion)
+   - 4.2 [WAV to CAS Conversion (wav2cas algorithm)](#42-wav-to-cas-conversion-wav2cas-algorithm)
+   - 4.3 [Practical Limits](#43-practical-limits)
+5. [Glossary](#5-glossary)
+6. [Reference](#6-reference)
 
 ---
 
@@ -37,7 +46,7 @@ When you play an MSX cassette tape, the computer decodes the audio back into dat
 - **CAS format** - Digital preservation container (community standard)
 - **MSX tape encoding** - Physical audio protocol (official MSX standard)
 - **File types** - ASCII, BASIC, and BINARY semantics
-- **BIOS interface** - How MSX hardware handles tape operations
+
 ---
 
 ## 2. CAS File Format: general structure
@@ -348,7 +357,6 @@ Offset: 0x0018
 - After reading 2nd block, file is complete → next `CAS HEADER`
   starts a NEW file (if present)
 
-
 ```
 ┌────────────────────────────────────────────────────────────┐
 │ BASIC FILE: "GAME  " with tokenized BASIC program          │
@@ -387,7 +395,6 @@ Offset: 0x0018
 │ [BASIC PROGRAM: 282 bytes in tokenized format]             │
 │   (Internal tokenized format structure)                    │
 └────────────────────────────────────────────────────────────┘
-
 ```
 
 **Key points:**
@@ -397,10 +404,9 @@ Offset: 0x0018
 - Even if program contains 0x1A byte, it's treated as data, not `EOF`
 - Zero-byte padding (`0x00`) added if needed for 8-byte alignment
 
-
 ## 3. MSX Tape Encoding
 
-This section describes how MSX computers actually read and write cassette tapes. While CAS files store the logical structure, real MSX hardware converts data into audio signals that can be recorded on magnetic tape. This is the official MSX standard, independent of the CAS preservation format.
+This section describes how MSX computers actually read and write cassette tapes. While CAS files store the logical structure, real MSX hardware converts data into audio signals that can be recorded on magnetic tape.
 
 ### 3.1 FSK Modulation
 
@@ -411,7 +417,7 @@ MSX uses Frequency Shift Keying (FSK) to convert digital bits into audio tones. 
 
 Supported baud rates: 1200 baud (default) or 2400 baud.
 
-**Common WAV conversion settings** (not part of MSX standard, but work well):
+**Common WAV conversion settings**:
 - Sample rate: 43200 Hz
 - Bit depth: 8-bit unsigned PCM  
 - Channels: Mono
@@ -441,19 +447,19 @@ Each bit has a fixed time duration, but uses different frequencies (different nu
 
 **How MSX hardware actually detects bits:**
 
-The MSX doesn't directly measure frequencies. Instead, it measures the time between zero crossings (when the signal crosses zero amplitude) by counting CPU T-states. The process:
-
-1. **Wait for zero crossing** - Detect when signal crosses zero (consumes up to half a cycle)
-2. **Start timer** - Begin counting CPU T-states (cycles)
-3. **Wait for next zero crossing** - One half-cycle later
-4. **Stop timer** - End measurement (we've now consumed roughly a full cycle)
-5. **Compare with thresholds** - If time is SHORT, it's a 1-bit. If LONG, it's a 0-bit
+The MSX doesn't directly measure frequencies. Instead, it measures the time between zero crossings (when the signal crosses zero amplitude) by counting CPU T-states.
 
 **Zero crossing intervals at 1200 baud:**
-- 1200 Hz: half-cycle = 416.7 µs = 1491 T-states (LONG = 0-bit)
-- 2400 Hz: half-cycle = 208.3 µs = 746 T-states (SHORT = 1-bit)
+- 1200 Hz: half-cycle = 416.7 µs = 1491 T-states (`LONG` = 0-bit)
+- 2400 Hz: half-cycle = 208.3 µs = 746  T-states (`SHORT` = 1-bit)
 
-**Key point:** Although we measure the duration of one half-cycle, we consume approximately a full cycle of signal to do so (waiting for the first zero crossing, then measuring to the next one). This is why 0-bits are 1 full cycle and 1-bits are 2 full cycles.
+1. **Wait for zero crossing** - Detect when signal crosses zero
+2. **Start timer** - Begin counting CPU T-states (CPU cycles)
+3. **Wait for next zero crossing** - One half-cycle later
+4. **Stop timer** - End measurement
+5. **Compare with thresholds** - If time is `SHORT`, it's a 1-bit. If `LONG`, it's a 0-bit
+
+**Why different cycle counts:** The FSK encoding deliberately uses 1 cycle at 1200 Hz for 0-bits and 2 cycles at 2400 Hz for 1-bits. Both bit types take the same time duration (833.3 µs at 1200 baud), but 1-bits contain twice as many wave cycles at twice the frequency. The MSX detects which bit was sent by measuring the time between zero crossings—a longer interval indicates a 0-bit, while a shorter interval indicates a 1-bit.
 
 This timing-based method is more reliable than trying to measure exact frequencies, especially with tape speed variations and analog signal degradation.
 
@@ -506,18 +512,22 @@ One 1200 Hz cycle for START, then twenty 2400 Hz cycles for the 1-bits.
 
 Before transmitting data, MSX sends periods of silence and repetitive sync pulses. These serve multiple purposes: allowing the cassette motor to stabilize, providing timing reference for baud rate detection (by measuring zero-crossing intervals), and acting as a carrier detection signal.
 
-**Sequence:** silence → sync pulses → data
+**Sequence:** silence → sync pulses → data bytes
 
-- Long silence: 2 sec (first block)
-- Short silence: 1 sec (subsequent blocks)
-- Initial sync: 8000 1-bits (~6.67 sec)
-- Block sync: 2000 1-bits (~1.67 sec)
+- **First block of each file** (file header block):
+  - Long silence: 2 seconds (motor startup and stabilization)
+  - Initial sync: 8000 1-bits (~6.67 sec) (baud rate detection and carrier lock)
+  - Data: Type marker (10 bytes) + Filename (6 bytes) = 16 bytes total
+
+- **Subsequent blocks within the same file** (data blocks):
+  - Short silence: 1 second (inter-block gap)
+  - Block sync: 2000 1-bits (~1.67 sec) (re-synchronization)
+  - Data: Block content (addresses + program data, or text data)
 
 **Example: Complete audio structure for a binary file**
 
 ```
 File: BINARY "GAME" with 256 bytes of data
-
 ┌─────────────────────────────────────────────────────────────┐
 │ BLOCK 1: File Header                                        │
 ├─────────────────────────────────────────────────────────────┤
@@ -532,13 +542,12 @@ File: BINARY "GAME" with 256 bytes of data
 │   Purpose: Initial sync, baud detection                     │
 ├─────────────────────────────────────────────────────────────┤
 │ [10 bytes: D0 D0 D0 D0 D0 D0 D0 D0 D0 D0]                   │
-│   Each byte: START + 8 data + 2 STOP = 11 bits              │
+│   Each byte: START(0) + 8 data + 2 STOP(2x1)                │
 │   10 bytes × 9.17 ms = ~92 ms                               │
 ├─────────────────────────────────────────────────────────────┤
 │ [6 bytes: filename "GAME  "]                                │
 │   6 bytes × 9.17 ms = ~55 ms                                │
 └─────────────────────────────────────────────────────────────┘
-
 ┌─────────────────────────────────────────────────────────────┐
 │ BLOCK 2: Data Block                                         │
 ├─────────────────────────────────────────────────────────────┤
@@ -562,195 +571,105 @@ File: BINARY "GAME" with 256 bytes of data
 Total audio duration: ~13 seconds for this small file
 ```
 
-**Example: Sync pulse pattern detail**
+### 3.5 Mapping CAS Structure to Audio Encoding
+
+This section shows how the logical CAS file structure (discussed in Section 2) maps to the physical audio encoding on tape:
 
 ```
-Initial sync (8000 1-bits):
-┌────────────────────────────────────────────────────────────┐
-│ 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 ... (8000 times)           │
-│ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓                            │
-│ Each 1-bit = 2 cycles of 2400 Hz                           │
-│ Total = 16,000 cycles of 2400 Hz                           │
-│                                                            │
-│ Audio waveform:                                            │
-│ ∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿│
-│   (continuous 2400 Hz tone for 6.67 seconds)               │
-│   16,000 complete wave cycles                              │
-└────────────────────────────────────────────────────────────┘
-
-This long tone serves multiple purposes:
-1. Allows MSX to measure bit timing and auto-detect baud rate (by measuring zero-crossing intervals)
-2. Provides stable reference for bit boundaries
-3. Confirms tape is playing at correct speed (via consistent zero-crossing timing)
-4. Acts as "carrier detect" signal
+┌─────────────────────────────────────────────────────────────┐
+│ CAS FILE STRUCTURE          AUDIO ENCODING                  │
+├─────────────────────────────────────────────────────────────┤
+│ [CAS HEADER: 8 bytes]  →    [Long silence: 2 sec]           │
+│ (File header delimiter)     [Initial sync: 8000 1-bits]     │
+│                             [8 bytes encoded as audio]      │
+│                                                             │
+│ File header block:     →    [16 bytes encoded as audio:     │
+│   Type marker (10 B)          - Type marker (10 bytes)      │
+│   Filename (6 B)              - Filename (6 bytes)]         │
+├─────────────────────────────────────────────────────────────┤
+│ [CAS HEADER: 8 bytes]  →    [Short silence: 1 sec]          │
+│ (Data block delimiter)      [Block sync: 2000 1-bits]       │
+│                             [8 bytes encoded as audio]      │
+│                                                             │
+│ Data block:            →    [Data encoded as audio:         │
+│   (varies by type)            - Addresses (6 bytes)         │
+│                               - Program/text data           │
+│                               - Padding if needed]          │
+├─────────────────────────────────────────────────────────────┤
+│ [Next file...]         →    [Long silence: 2 sec]           │
+│                             [Initial sync: 8000 1-bits]     │
+│                             ...                             │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+**Key points:**
+- First block of each file gets long silence (2 sec) + initial sync (8000 1-bits) + data bytes
+- Subsequent blocks get short silence (1 sec) + block sync (2000 1-bits) + data bytes
+- All data bytes (type markers, filenames, addresses, program data, text) are encoded using FSK with serial framing (START + 8 data bits + 2 STOP bits)
+- The silence and sync are **not** stored in CAS files—they're added during WAV conversion or tape recording
 
 ---
 
-## 4. MSX BIOS Tape Routines
+## 4. Implementation Guide
 
-| Function | Address | Purpose                      |
-|----------|---------|------------------------------|
-| TAPION   | #00E1 | Read header and start motor  |
-| TAPIN    | #00E4 | Read one byte                |
-| TAPIOF   | #00E7 | Stop reading                 |
-| TAPOON   | #00EA | Write header and start motor |
-| TAPOUT   | #00ED | Write one byte               |
-| TAPOOF   | #00F0 | Stop writing                 |
-| STMOTR   | #00F3 | Motor control                |
+### 4.1 CAS to WAV Conversion
 
-**Usage:** TAPION reads header, TAPIN reads bytes until error, TAPIOF stops. TAPOUT writes data with automatic serial framing and FSK encoding.
+To convert a CAS file to audio (WAV format), you need to parse the CAS structure and generate the corresponding audio pulses:
 
----
+**Algorithm:**
 
-## 5. Examples and Analysis
+1. **Parse CAS file** - Scan for `CAS HEADER` delimiters (`1F A6 DE BA CC 13 7D 74`)
+2. **Determine block type** - Check if block is a file header (by examining the type marker)
+3. **Generate silence and sync:**
+   - **File header blocks:** Long silence (2 sec) + Initial sync (8000 1-bits)
+   - **Data blocks:** Short silence (1 sec) + Block sync (2000 1-bits)
+4. **Encode data bytes** - Convert each byte using FSK with serial framing:
+   - START bit (0-bit) = 1 cycle at 1200 Hz
+   - 8 DATA bits (LSB first) = 1-bit as 2 cycles at 2400 Hz, 0-bit as 1 cycle at 1200 Hz
+   - 2 STOP bits (1-bits) = 2 cycles at 2400 Hz each
+5. **Repeat** for each block in the CAS file
+6. **Write WAV file** - Output as PCM audio (typically 43200 Hz sample rate, 8-bit mono)
 
-### 5.1 Hex Dump Examples
+**Key points:**
+- The 8-byte `CAS HEADER` itself is **not** encoded as audio—it triggers the silence/sync sequence
+- First `CAS HEADER` of each file → long silence + initial sync
+- Subsequent `CAS HEADER`s → short silence + block sync
+- All block data (type markers, filenames, addresses, program bytes) are encoded as audio
 
-#### Example 1: Binary File
+### 4.2 WAV to CAS Conversion (wav2cas algorithm)
 
-```
-Offset  Hex Dump                                          ASCII
-------  ------------------------------------------------  ----------------
-0x0000  1F A6 DE BA CC 13 7D 74 D0 D0 D0 D0 D0 D0 D0 D0  ....¼..}t........
-0x0010  D0 D0 48 45 4C 4C 4F 20                          ..HELLO 
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^  File header block
-        1F A6 DE BA CC 13 7D 74 = CAS HEADER
-        D0 D0 D0 D0 D0 D0 D0 D0 D0 D0 = BINARY marker
-        48 45 4C 4C 4F 20 = "HELLO " (filename)
+To convert audio (WAV format) back to a CAS file, you need to decode the audio pulses and reconstruct the CAS structure. This is the algorithm used by the wav2cas tool:
 
-0x0018  1F A6 DE BA CC 13 7D 74 00 80 FF 80 00 80 01 02  ....¼..}t........
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^  CAS HEADER (data block start)
-        00 80 = Load address (0x8000, little-endian)
-        FF 80 = End address (0x80FF, little-endian)
-        00 80 = Exec address (0x8000, little-endian)
-        01 02 ... = Program bytes
-```
+**Algorithm:**
 
-#### Example 2: ASCII File
+1. **Skip silence** - Advance past low-amplitude regions (below threshold)
+2. **Detect sync header** 
+   - Find sequence of 25+ similar-width pulses using zero-crossing detection
+   - Calculate average pulse width for adaptive byte decoding
+3. **Write CAS HEADER** - Pad to 8-byte alignment, then write delimiter: `1F A6 DE BA CC 13 7D 74`
+4. **Decode bytes** - Convert audio pulses to bytes:
+   - Measure zero-crossing intervals to distinguish 1200 Hz (0-bit) from 2400 Hz (1-bit)
+   - Extract serial frame: START (0-bit) + 8 DATA bits (LSB first) + 2 STOP (1-bits)
+   - Write each decoded byte to CAS file
+5. **Continue until silence** - Repeat step 4 until silent region detected
+6. **Repeat** - Return to step 1 until end of audio
 
-```
-Offset  Hex Dump                                          ASCII
-------  ------------------------------------------------  ----------------
-0x0000  1F A6 DE BA CC 13 7D 74 EA EA EA EA EA EA EA EA  ....¼..}t........
-0x0010  EA EA 54 45 53 54 20 20                          ..TEST  
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^  File header block
-        EA EA EA EA EA EA EA EA EA EA = ASCII marker
-        54 45 53 54 20 20 = "TEST  " (filename)
+**Key points:**
+- When converting WAV→CAS: audio silence and sync sequences are NOT stored in the CAS file; instead a `CAS HEADER` delimiter is written
+- When converting CAS→WAV: each `CAS HEADER` delimiter triggers generation of audio silence + sync sequence
+- Uses adaptive pulse width tolerance (window factor ~1.5×) to handle tape speed variations
+- Signal processing options: amplitude normalization, envelope correction (noise reduction), phase shifting
+- Configurable thresholds allow tuning for different tape quality and recording conditions
 
-0x0018  1F A6 DE BA CC 13 7D 74 31 30 20 50 52 49 4E 54  ....¼..}t10 PRINT
-0x0028  20 22 48 45 4C 4C 4F 22 0D 0A 32 30 20 45 4E 44   "HELLO"..20 END
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^  CAS HEADER (first data block)
-        31 30 20 50... = ASCII text: "10 PRINT "HELLO"\r\n20 END"
-
-0x0038  1F A6 DE BA CC 13 7D 74 0D 0A 1A 1A 1A 1A 1A 1A  ....¼..}t........
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^  CAS HEADER (second data block)
-        0D 0A = \r\n (end of line)
-        1A = EOF marker (first occurrence = logical end)
-        1A 1A 1A... = EOF padding (ignored)
-```
-
-#### Example 3: BASIC File
-
-```
-Offset  Hex Dump                                          ASCII
-------  ------------------------------------------------  ----------------
-0x0000  1F A6 DE BA CC 13 7D 74 D3 D3 D3 D3 D3 D3 D3 D3  ....¼..}t........
-0x0010  D3 D3 47 41 4D 45 20 20                          ..GAME  
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^  File header block
-        D3 D3 D3 D3 D3 D3 D3 D3 D3 D3 = BASIC marker
-        47 41 4D 45 20 20 = "GAME  " (filename)
-
-0x0018  1F A6 DE BA CC 13 7D 74 00 80 FF 82 00 80 00 00  ....¼..}t........
-0x0028  0A 00 8F 20 31 30 30 30 00 14 00 A1 20 49 BC 31  ... 1000.... I.1
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^  CAS HEADER (data block)
-        00 80 = Load address (0x8000)
-        FF 82 = End address (0x82FF) 
-        00 80 = Exec address (0x8000)
-        00 00 0A 00 = BASIC line structure
-        8F = BASIC token (FOR)
-        20 31 30 30 30 = " 1000" (line number as text)
-```
-
-#### Example 4: Multi-File Archive
-
-```
-Offset  Description
-------  -----------
-0x0000  [HEADER] + ASCII "FILE1" header block
-0x0018  [HEADER] + ASCII "FILE1" data block 1
-0x0120  [HEADER] + ASCII "FILE1" data block 2 (with EOF)
-0x0228  [HEADER] + BINARY "LOAD" header block
-0x0240  [HEADER] + BINARY "LOAD" data block
-0x2340  [HEADER] + BINARY "CODE" header block  
-0x2358  [HEADER] + BINARY "CODE" data block
-```
-
-**Key observations:**
-- Each `CAS HEADER` (`1F A6 DE BA CC 13 7D 74`) marks a new block
-- Type markers immediately follow the header in file header blocks
-- Addresses are stored in little-endian format
-- ASCII files can span multiple blocks; `EOF` (`0x1A`) marks logical end
-- `BINARY/BASIC` files always have exactly 2 blocks (header + data)
-
-### 5.2 Real CAS Analysis
-
-The analyzed CAS file contains four files:
-
-1. ASCII  "Nilo"
-2. ASCII  "bas2"
-3. BINARY "pant"
-4. BINARY "code"
-
-### Observed Properties
-
-- ASCII files span multiple blocks
-- `EOF` (`0x1A`) appears inside data blocks
-- Padding after `EOF` is present
-- Binary files use exactly two blocks
-- CAS headers appear inside logical ASCII flow
-
-This confirms:
-- `EOF` is semantic, not structural
-- CAS headers are pure delimiters
-- Multi-file CAS images are normal
-
----
-
-## 6. Implementation Guide
-
-### 6.1 Parsing Algorithm
-
-To parse a CAS file, scan sequentially through the data:
-
-1. **Search for CAS HEADER** - Look for the 8-byte pattern `1F A6 DE BA CC 13 7D 74`
-2. **Read the type marker** - Next 10 bytes identify the file type (`ASCII/BINARY/BASIC`)
-3. **Read the filename** - Next 6 bytes contain the filename (space-padded)
-4. **Read data blocks:**
-   - **For ASCII files:** Continue reading through subsequent blocks until you encounter `0x1A` (`EOF` marker)
-   - **For BINARY/BASIC files:** Read exactly one more block containing addresses and program data
-5. **Repeat** from step 1 to find the next file
-
-This sequential scan is necessary because CAS files have no directory or table of contents.
-
-### 6.2 Common Mistakes
-
-**Treating CAS HEADERs as data**  
-The 8-byte `CAS HEADER` is a structural delimiter, not part of the file content. Don't include it when extracting file data.
-
-**Expecting length fields**  
-CAS blocks have no length headers. ASCII files end at `0x1A`, `BINARY/BASIC` files use address ranges to determine length.
-
-**Treating 0x1A as structural**  
-The `0x1A` byte is meaningful only for ASCII files as an `EOF` marker. In `BINARY/BASIC` files, `0x1A` is just normal data with no special meaning.
-
-### 6.3 Practical Limits
+### 4.3 Practical Limits
 
 **Filename length:** Exactly 6 bytes. Longer names are automatically truncated. Shorter names are space-padded on the right (0x20). Names with fewer than 6 printable characters are right-padded with spaces. When extracting files, trailing spaces and null bytes are stripped.
 
 **Filename character support:** ASCII characters only. The format treats filenames as 6-byte ASCII arrays. Characters outside printable ASCII range may cause issues.
 
-**Block alignment:** Block data must be 8-byte aligned, which means `CAS HEADER`s (being 8 bytes) must be placed at 8-byte aligned offsets (0, 8, 16, 24, ...). When creating CAS files, data blocks are padded with:
+**Block alignment:** Block data must be 8-byte aligned, which means `CAS HEADER`s (being 8 bytes) must be placed at 8-byte aligned offsets (0, 8, 16, 24, ...).
+
+When creating CAS files, data blocks are padded with:
 - **BINARY/BASIC files:** Zero bytes (0x00) for 8-byte alignment
 - **ASCII files:** `EOF` bytes (0x1A) for 256-byte alignment
 - **Custom blocks:** Zero bytes (0x00) for 8-byte alignment
@@ -766,23 +685,13 @@ The `0x1A` byte is meaningful only for ASCII files as an `EOF` marker. In `BINAR
 
 ---
 
-## 7. Reference
-
-### 7.1 Tools
-
-**CASTools** (C) - cas2wav, wav2cas, casdir utilities  
-**MCP** (Rust) - https://github.com/apoloval/mcp - Create, extract, list CAS files
-
-### 7.2 Documentation
-
-*Compiled from official MSX documentation, BIOS behavior analysis, and real-world CAS examination.*
-
----
-
-## 8. Glossary
+## 5. Glossary
 
 **ASCII file**  
 A text file stored in a CAS container. ASCII files can span multiple data blocks and are terminated by a `0x1A` (`EOF`) byte. The MSX reads ASCII files character-by-character until encountering the `EOF` marker. Common for BASIC program listings saved with `SAVE "CAS:filename",A`.
+
+**Baud rate**  
+The transmission speed in bits per second. MSX cassette systems support 1200 baud (default) or 2400 baud. At 1200 baud, each bit takes 833.3 µs and approximately 109 bytes/second can be transmitted. The baud rate determines the frequency of audio pulses used in FSK encoding.
 
 **BASIC file**  
 A tokenized BASIC program stored in binary format. BASIC files always consist of exactly two blocks: a file header block and one data block. The data includes a 6-byte address header (load address, end address, and execution address) followed by the tokenized program where keywords are converted to single-byte tokens (e.g., `PRINT` becomes `0x91`). The address structure is identical to BINARY files. Loaded with the `LOAD "CAS:filename"` command, which recognizes the BASIC type marker (0xD3) and loads the tokenized program into BASIC's program area.
@@ -796,8 +705,17 @@ A unit of data in a CAS file, delimited by `CAS HEADER`s. Each block contains ei
 **`CAS HEADER`**  
 An 8-byte delimiter pattern (`1F A6 DE BA CC 13 7D 74`) that marks the beginning of every block in a CAS file. These headers allow parsers to locate block boundaries by scanning for this magic number. The `CAS HEADER` is not part of the actual file data—it's purely a structural marker in the CAS container format.
 
+**Data block**  
+A block containing the actual file content (as opposed to a file header block which contains metadata). For ASCII files, data blocks contain text. For BINARY and BASIC files, the data block contains a 6-byte address header followed by program data.
+
+**Data header**  
+The 6-byte address structure at the beginning of BINARY and BASIC data blocks. Contains three 16-bit little-endian values: load address (where data will be loaded in memory), end address (end of data range), and execution address (where to start execution with `BLOAD ...,R`). The program data length is calculated as `end_address - load_address`.
+
+**8-byte alignment**  
+A critical requirement of the CAS format: all blocks must start at offsets divisible by 8. Since `CAS HEADER`s are 8 bytes, this means they must appear at positions 0, 8, 16, 24, etc. When creating CAS files, data blocks are padded with zeros (BINARY/BASIC) or `0x1A` bytes (ASCII) to maintain this alignment.
+
 **File header block**  
-The first block of every file in a CAS container. Contains a 10-byte type marker (identifying the file as ASCII, BASIC, or BINARY) followed by a 6-byte filename. The MSX BIOS reads this block to determine how to process subsequent data blocks.
+The first block of every file in a CAS container. Contains a 10-byte type marker (identifying the file as `ASCII`, `BASIC`, or `BINARY`) followed by a 6-byte filename. The MSX BIOS reads this block to determine how to process subsequent data blocks.
 
 **FSK (Frequency Shift Keying)**  
 The audio encoding method used by MSX cassette tapes to convert digital bits into audio tones. Zero bits are encoded as 1200 Hz (1 cycle per bit), while one bits are encoded as 2400 Hz (2 cycles per bit). The MSX hardware detects these frequencies by measuring the time between zero-crossings of the audio waveform.
@@ -805,5 +723,59 @@ The audio encoding method used by MSX cassette tapes to convert digital bits int
 **Logical EOF**  
 The semantic end of an ASCII file, marked by the first occurrence of the `0x1A` byte. When the MSX reads an ASCII file, it stops at this marker and treats any subsequent data as padding or garbage. This is distinct from structural delimiters like `CAS HEADER`s—`0x1A` has meaning only within ASCII file content.
 
+**Serial framing**  
+The bit structure used to transmit each byte: 1 START bit (0-bit), 8 DATA bits (LSB first), and 2 STOP bits (1-bits), totaling 11 bits per byte. This is similar to RS-232 serial communication and allows the receiving hardware to synchronize on byte boundaries.
+
+**Sync header**  
+A sequence of consecutive 1-bits (2400 Hz pulses) transmitted before each data block to allow the MSX to detect carrier signal and synchronize timing. Initial sync (8000 1-bits, ~6.67 sec) precedes file header blocks. Block sync (2000 1-bits, ~1.67 sec) precedes data blocks. During WAV to CAS conversion, sync headers trigger insertion of `CAS HEADER` delimiters.
+
 **Type marker**  
 A 10-byte pattern in the file header block that identifies the file type: `0xEA` repeated 10 times for ASCII files, `0xD0` repeated 10 times for BINARY files, or `0xD3` repeated 10 times for BASIC files. This tells the MSX BIOS and CAS parsing tools how to interpret the subsequent data blocks.
+
+**Zero-crossing**  
+The point where an audio waveform crosses zero amplitude (changes from positive to negative or vice versa). MSX hardware detects bits by measuring the time interval between zero-crossings: longer intervals indicate 1200 Hz (0-bit), shorter intervals indicate 2400 Hz (1-bit). This timing-based method is more reliable than frequency analysis for degraded tape signals.
+
+---
+
+## 6. Reference
+
+### Tools
+
+**CASTools** (C implementation)
+- Repository: https://github.com/joyrex2001/castools (original by Vincent van Dam)
+- Fork: https://github.com/xesco/castools (this project)
+- Utilities: cas2wav, wav2cas, casdir
+- First release: 2001, latest version: 1.31 (2016)
+- License: GPL-2.0
+
+**MCP - MSX CAS Packager** (Rust implementation)
+- Repository: https://github.com/apoloval/mcp
+- Author: Alvaro Polo
+- Features: Create, extract, list, and export CAS files to WAV
+- License: Mozilla Public License 2.0
+
+### Technical Standards
+
+**Kansas City Standard**
+- Wikipedia: https://en.wikipedia.org/wiki/Kansas_City_standard
+- Basis for MSX tape encoding using FSK (Frequency Shift Keying)
+- MSX uses 1200 baud variation with optional 2400 baud mode
+
+### Community Resources
+
+**MSX Community Sites**
+- MSX Resource Center: https://www.msx.org/
+- MSX Wiki: https://www.msx.org/wiki/
+- Generation MSX: https://www.generation-msx.nl/
+
+**Emulators for Testing**
+- openMSX: https://openmsx.org/ (most accurate MSX emulator)
+- blueMSX: http://www.bluemsx.com/
+- WebMSX: https://webmsx.org/ (browser-based)
+
+### Acknowledgments
+
+This documentation was compiled from:
+- Analysis of CASTools (by Vincent van Dam) and MCP (by Alvaro Polo) source code implementations
+- Practical testing with MSX emulators
+- MSX community knowledge and reverse engineering of existing CAS files
