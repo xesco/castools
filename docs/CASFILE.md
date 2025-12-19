@@ -42,11 +42,11 @@ When you play an MSX cassette tape, the computer decodes the audio back into dat
 
 ## 2. CAS File Format
 
-A CAS file is a sequential container that can hold multiple files of different types (ASCII, BASIC, BINARY). Each file consists of one or more data blocks. Both files and their individual blocks are separated by CAS HEADER delimiters—an 8-byte marker that allows parsers to locate boundaries within the stream.
+A CAS file is a sequential container that can hold multiple files of different types (ASCII, BASIC, BINARY). Each file consists of one or more data blocks. Both files and their individual blocks are separated by `CAS HEADER` delimiters—an 8-byte marker that allows parsers to locate boundaries within the stream.
 
 **CAS HEADER Structure and Alignment:**
 
-The CAS HEADER is always 8 bytes (`1F A6 DE BA CC 13 7D 74`) and block data must be 8-byte aligned, which means CAS HEADERs are also placed at 8-byte aligned offsets (0, 8, 16, 24, ...).
+The `CAS HEADER` is always 8 bytes (`1F A6 DE BA CC 13 7D 74`) and block data must be 8-byte aligned, which means `CAS HEADER`s are also placed at 8-byte aligned offsets (0, 8, 16, 24, ...).
 
 Every file begins with a file header block that identifies the file type and provides its 6-character filename. This header block is followed by one or more data blocks containing the actual file content. This is the general structure—specific details for each file type are covered in the following sections.
 
@@ -91,7 +91,7 @@ Every file in a CAS image starts with a file header block. This block identifies
 
 **Filename Encoding:**
 
-Filenames are exactly 6 bytes, space-padded. Example "HELLO":
+Filenames are exactly 6 bytes using ASCII character encoding, space-padded (0x20) to the right if shorter than 6 characters. Example "HELLO":
 ```
 48 45 4C 4C 4F 20
 H  E  L  L  O  (space)
@@ -108,7 +108,6 @@ Offset  Bytes  Content                                    Description
 ------  -----  -----------------------------------------  --------------------------
 Total:  24 bytes (8-byte delimiter + 16 bytes of block data)
 
-Structure:
 ┌────────────────────────────────────────────────┐
 │ [CAS HEADER: 8 bytes] ← Delimiter              │
 │   1F A6 DE BA CC 13 7D 74                      │
@@ -133,17 +132,17 @@ ASCII files have a flexible structure and can span multiple blocks. Unlike BINAR
 
 **End-of-File Detection:**
 
-ASCII files use the byte `0x1A` (decimal 26) as an EOF marker. When the MSX reads an ASCII file, it stops reading at the first occurrence of this byte, treating it as the logical end of the file. 
+ASCII files use the byte `0x1A` (decimal 26) as an `EOF` marker. When the MSX reads an ASCII file, it stops reading at the first occurrence of this byte, treating it as the logical end of the file. 
 
 **Block Size:**
 
-ASCII data blocks are typically 256 bytes each. When creating CAS files, text is divided into 256-byte chunks. The last block must contain at least one EOF marker, and is padded to 256 bytes with `0x1A` bytes. If the text length is a multiple of 256, an additional block containing only `0x1A` padding is required.
+ASCII data blocks are typically 256 bytes each. When creating CAS files, text is divided into 256-byte chunks. The last block must contain at least one `EOF` marker, and is padded to 256 bytes with `0x1A` bytes. If the text length is a multiple of 256, an additional block containing only `0x1A` padding is required.
 
 **What happens after EOF:**
 - Data after the `0x1A` marker within the same file is ignored (padding, garbage data)
-- A CAS HEADER after the EOF marker may signal the start of a **new file** (not continuation of the current ASCII file)
+- A `CAS HEADER` after the `EOF` marker may signal the start of a **new file** (not continuation of the current ASCII file)
 
-**Important limitation:** Because `0x1A` serves as the EOF marker, ASCII files cannot contain this byte as part of their actual content. This is only a restriction for ASCII files—BINARY and BASIC files can include `0x1A` as regular data since they don't use an EOF marker.
+**Important limitation:** Because `0x1A` serves as the `EOF` marker, ASCII files cannot contain this byte as part of their actual content. This is only a restriction for ASCII files—BINARY and BASIC files can include `0x1A` as regular data since they don't use an `EOF` marker.
 
 **Putting it all together**
 
@@ -206,10 +205,10 @@ Offset: 0x0120
 **Key points:**
 - File header block identifies type (EA) and name ("README")
 - Data blocks contain actual text content
-- No EOF marker in first data block → continue reading
-- EOF marker (0x1A) in second data block → stop reading
-- Any data after EOF is ignored (padding, garbage)
-- If another CAS HEADER appears, check if it starts a NEW file
+- No `EOF` marker in first data block → continue reading
+- `EOF` marker (0x1A) in second data block → stop reading
+- Any data after `EOF` is ignored (padding, garbage)
+- If another `CAS HEADER` appears, check if it starts a NEW file
 
 
 ### 2.3 BASIC and BINARY Files
@@ -236,13 +235,13 @@ For example: Load=0xC000, End=0xC200 → 512 bytes (0x200) of program data
 
 **Parsing approach:**
 
-Since BINARY/BASIC files always have exactly 2 blocks (file header + data block), and the address calculation tells you the program data length, after reading the data header and the calculated number of program data bytes, the file is complete. 
+Since `BINARY/BASIC` files always have exactly 2 blocks (file header + data block), and the address calculation tells you the program data length, after reading the data header and the calculated number of program data bytes, the file is complete. 
 
-After the program data, there may be padding bytes to maintain 8-byte alignment. Since the next CAS HEADER must start at an 8-byte aligned offset, padding (typically zero bytes) is added if the program data doesn't end at an 8-byte boundary. To find the next file, scan forward to locate the next CAS HEADER at an aligned offset.
+After the program data, there may be padding bytes to maintain 8-byte alignment. Since the next `CAS HEADER` must start at an 8-byte aligned offset, padding (typically zero bytes) is added if the program data doesn't end at an 8-byte boundary. To find the next file, scan forward to locate the next `CAS HEADER` at an aligned offset.
 
 **No EOF Marker:**
 
-Since these are binary files, all byte values from `0x00` to `0xFF` are valid data. There's no special EOF marker like ASCII's `0x1A`—the addresses define exactly where the data ends.
+Since these are binary files, all byte values from `0x00` to `0xFF` are valid data. There's no special `EOF` marker like ASCII's `0x1A`—the addresses define exactly where the data ends.
 
 **File ID Bytes:**
 
@@ -250,7 +249,7 @@ When BINARY and BASIC files are stored on disk (e.g., in MSX-DOS), they include 
 - **BINARY files:** `0xFE` prefix byte (not present in CAS format)
 - **BASIC files:**  `0xFF` prefix byte (not present in CAS format)
 
-These ID bytes are **NOT** stored in CAS files—they belong to the disk file format. When extracting BINARY files from CAS, tools typically add the `0xFE` prefix to match the disk format. When adding `BINARY/BASIC` files to a CAS, tools automatically strip these prefix bytes if present.
+These ID bytes are **NOT** stored in CAS files—they belong to the disk file format. When extracting BINARY files from CAS, tools typically add the `0xFE` prefix to match the disk format. When adding BINARY/BASIC files to a CAS, tools automatically strip these prefix bytes if present.
 
 **Example: Adding prefix when extracting BINARY file from CAS to disk**
 
@@ -357,7 +356,7 @@ Offset: 0x0018
 - Block 2: Contains addresses and all program data
 - Data length determined by END_ADDRESS - LOAD_ADDRESS
 - All bytes (including 0x1A) are valid data
-- After reading 2nd block, file is complete → next CAS HEADER
+- After reading 2nd block, file is complete → next `CAS HEADER`
   starts a NEW file (if present)
 
 
@@ -408,7 +407,7 @@ Offset: 0x0018
 - Keywords (PRINT, END, FOR, etc.) become single-byte tokens (e.g., 0x91 = PRINT)
 - Line numbers and program structure are encoded in binary format
 - Internal tokenization details vary by MSX BASIC version
-- Even if program contains 0x1A byte, it's treated as data, not EOF
+- Even if program contains 0x1A byte, it's treated as data, not `EOF`
 
 
 ## 3. MSX Tape Encoding
@@ -700,11 +699,11 @@ Offset  Description
 ```
 
 **Key observations:**
-- Each CAS HEADER (`1F A6 DE BA CC 13 7D 74`) marks a new block
+- Each `CAS HEADER` (`1F A6 DE BA CC 13 7D 74`) marks a new block
 - Type markers immediately follow the header in file header blocks
 - Addresses are stored in little-endian format
-- ASCII files can span multiple blocks; EOF (`0x1A`) marks logical end
-- BINARY/BASIC files always have exactly 2 blocks (header + data)
+- ASCII files can span multiple blocks; `EOF` (`0x1A`) marks logical end
+- `BINARY/BASIC` files always have exactly 2 blocks (header + data)
 
 ### 5.2 Real CAS Analysis
 
@@ -718,13 +717,13 @@ The analyzed CAS file contains four files:
 ### Observed Properties
 
 - ASCII files span multiple blocks
-- EOF (`0x1A`) appears inside data blocks
-- Padding after EOF is present
+- `EOF` (`0x1A`) appears inside data blocks
+- Padding after `EOF` is present
 - Binary files use exactly two blocks
 - CAS headers appear inside logical ASCII flow
 
 This confirms:
-- EOF is semantic, not structural
+- `EOF` is semantic, not structural
 - CAS headers are pure delimiters
 - Multi-file CAS images are normal
 
@@ -737,10 +736,10 @@ This confirms:
 To parse a CAS file, scan sequentially through the data:
 
 1. **Search for CAS HEADER** - Look for the 8-byte pattern `1F A6 DE BA CC 13 7D 74`
-2. **Read the type marker** - Next 10 bytes identify the file type (ASCII/BINARY/BASIC)
+2. **Read the type marker** - Next 10 bytes identify the file type (`ASCII/BINARY/BASIC`)
 3. **Read the filename** - Next 6 bytes contain the filename (space-padded)
 4. **Read data blocks:**
-   - **For ASCII files:** Continue reading through subsequent blocks until you encounter `0x1A` (EOF marker)
+   - **For ASCII files:** Continue reading through subsequent blocks until you encounter `0x1A` (`EOF` marker)
    - **For BINARY/BASIC files:** Read exactly one more block containing addresses and program data
 5. **Repeat** from step 1 to find the next file
 
@@ -748,17 +747,17 @@ This sequential scan is necessary because CAS files have no directory or table o
 
 ### 6.2 Common Mistakes
 
-**Treating CAS headers as data**  
-The 8-byte CAS HEADER is a structural delimiter, not part of the file content. Don't include it when extracting file data.
+**Treating CAS HEADERs as data**  
+The 8-byte `CAS HEADER` is a structural delimiter, not part of the file content. Don't include it when extracting file data.
 
 **Mixing CAS parsing with audio encoding**  
 CAS files contain logical structure only. Don't try to interpret them as audio samples or look for FSK encoding—that's only in WAV files.
 
 **Expecting length fields**  
-CAS blocks have no length headers. ASCII files end at `0x1A`, BINARY/BASIC files use address ranges to determine length.
+CAS blocks have no length headers. ASCII files end at `0x1A`, `BINARY/BASIC` files use address ranges to determine length.
 
 **Treating 0x1A as structural**  
-The `0x1A` byte is meaningful only for ASCII files as an EOF marker. In BINARY/BASIC files, `0x1A` is just normal data with no special meaning.
+The `0x1A` byte is meaningful only for ASCII files as an `EOF` marker. In `BINARY/BASIC` files, `0x1A` is just normal data with no special meaning.
 
 ### 6.3 Practical Limits
 
@@ -766,9 +765,9 @@ The `0x1A` byte is meaningful only for ASCII files as an EOF marker. In BINARY/B
 
 **Filename character support:** ASCII characters only. The format treats filenames as 6-byte ASCII arrays. Characters outside printable ASCII range may cause issues.
 
-**Block alignment:** Block data must be 8-byte aligned, which means CAS HEADERs (being 8 bytes) must be placed at 8-byte aligned offsets (0, 8, 16, 24, ...). When creating CAS files, data blocks are padded with:
+**Block alignment:** Block data must be 8-byte aligned, which means `CAS HEADER`s (being 8 bytes) must be placed at 8-byte aligned offsets (0, 8, 16, 24, ...). When creating CAS files, data blocks are padded with:
 - **BINARY/BASIC files:** Zero bytes (0x00) for 8-byte alignment
-- **ASCII files:** EOF bytes (0x1A) for 256-byte alignment
+- **ASCII files:** `EOF` bytes (0x1A) for 256-byte alignment
 - **Custom blocks:** Zero bytes (0x00) for 8-byte alignment
 
 **Loading time at 1200 baud:
@@ -796,7 +795,7 @@ The `0x1A` byte is meaningful only for ASCII files as an EOF marker. In BINARY/B
 ## 8. Glossary
 
 **ASCII file**  
-A text file stored in a CAS container. ASCII files can span multiple data blocks and are terminated by a `0x1A` (EOF) byte. The MSX reads ASCII files character-by-character until encountering the EOF marker. Common for BASIC program listings saved with `SAVE "CAS:filename",A`.
+A text file stored in a CAS container. ASCII files can span multiple data blocks and are terminated by a `0x1A` (`EOF`) byte. The MSX reads ASCII files character-by-character until encountering the `EOF` marker. Common for BASIC program listings saved with `SAVE "CAS:filename",A`.
 
 **BASIC file**  
 A tokenized BASIC program stored in binary format. BASIC files always consist of exactly two blocks: a file header block and one data block. The data includes a 6-byte address header (load address, end address, and execution address) followed by the tokenized program where keywords are converted to single-byte tokens (e.g., `PRINT` becomes `0x91`). The address structure is identical to BINARY files. Loaded with the `LOAD "CAS:filename"` command, which recognizes the BASIC type marker (0xD3) and loads the tokenized program into BASIC's program area.
@@ -805,10 +804,10 @@ A tokenized BASIC program stored in binary format. BASIC files always consist of
 A raw machine code program or data block stored with address information. BINARY files always consist of exactly two blocks: a file header block and one data block containing a 6-byte address header (load address, end address, and execution address) followed by the program bytes. Loaded into memory with MSX-BASIC's `BLOAD` command and optionally executed with the `,R` parameter.
 
 **Block**  
-A unit of data in a CAS file, delimited by CAS HEADERs. Each block contains either file metadata (type marker and filename) or actual file content (program data, text, etc.). ASCII files can have many data blocks, while BINARY and BASIC files always have exactly one data block following their header block.
+A unit of data in a CAS file, delimited by `CAS HEADER`s. Each block contains either file metadata (type marker and filename) or actual file content (program data, text, etc.). ASCII files can have many data blocks, while BINARY and BASIC files always have exactly one data block following their header block.
 
-**CAS HEADER**  
-An 8-byte delimiter pattern (`1F A6 DE BA CC 13 7D 74`) that marks the beginning of every block in a CAS file. These headers allow parsers to locate block boundaries by scanning for this magic number. The CAS HEADER is not part of the actual file data—it's purely a structural marker in the CAS container format.
+**`CAS HEADER`**  
+An 8-byte delimiter pattern (`1F A6 DE BA CC 13 7D 74`) that marks the beginning of every block in a CAS file. These headers allow parsers to locate block boundaries by scanning for this magic number. The `CAS HEADER` is not part of the actual file data—it's purely a structural marker in the CAS container format.
 
 **File header block**  
 The first block of every file in a CAS container. Contains a 10-byte type marker (identifying the file as ASCII, BASIC, or BINARY) followed by a 6-byte filename. The MSX BIOS reads this block to determine how to process subsequent data blocks.
@@ -817,7 +816,7 @@ The first block of every file in a CAS container. Contains a 10-byte type marker
 The audio encoding method used by MSX cassette tapes to convert digital bits into audio tones. Zero bits are encoded as 1200 Hz (1 cycle per bit), while one bits are encoded as 2400 Hz (2 cycles per bit). The MSX hardware detects these frequencies by measuring the time between zero-crossings of the audio waveform.
 
 **Logical EOF**  
-The semantic end of an ASCII file, marked by the first occurrence of the `0x1A` byte. When the MSX reads an ASCII file, it stops at this marker and treats any subsequent data as padding or garbage. This is distinct from structural delimiters like CAS HEADERs—`0x1A` has meaning only within ASCII file content.
+The semantic end of an ASCII file, marked by the first occurrence of the `0x1A` byte. When the MSX reads an ASCII file, it stops at this marker and treats any subsequent data as padding or garbage. This is distinct from structural delimiters like `CAS HEADER`s—`0x1A` has meaning only within ASCII file content.
 
 **Type marker**  
 A 10-byte pattern in the file header block that identifies the file type: `0xEA` repeated 10 times for ASCII files, `0xD0` repeated 10 times for BINARY files, or `0xD3` repeated 10 times for BASIC files. This tells the MSX BIOS and CAS parsing tools how to interpret the subsequent data blocks.
