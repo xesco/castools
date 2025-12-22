@@ -418,6 +418,8 @@ MSX uses Frequency Shift Keying (FSK) to convert digital bits into audio tones. 
 
 Data is encoded as either 1200 Hz (0 bit) or 2400 Hz (1 bit) audio tones. The MSX reads the tape by measuring zero-crossing timing (the intervals when the audio signal crosses zero amplitude) rather than directly measuring frequencies. The system supports two baud rates: 1200 baud (default) or 2400 baud.
 
+**Note:** Examples in this document use 1200 baud, but conversion to 2400 baud is straightforward—simply halve all timing values and double all frequencies.
+
 ### 3.2 Bit Encoding
 
 MSX encodes binary data by representing each bit (0 or 1) as a specific audio waveform pattern. The key principle is that **0-bits and 1-bits take the same amount of time, but use different frequencies**:
@@ -426,8 +428,6 @@ MSX encodes binary data by representing each bit (0 or 1) as a specific audio wa
 - **1-bit**: Encoded as 2 complete wave cycles at double the frequency (2400 Hz)
 
 This means a 1-bit has twice as many zero-crossings in the same time period as a 0-bit, allowing the MSX hardware to distinguish them by measuring the time between zero-crossings (longer intervals = 0, shorter intervals = 1).
-
-Each bit has a fixed time duration, but uses different frequencies (different numbers of wave cycles):
 
 | Baud Rate | Bit Type | Frequency | Full Cycle Time | Half-Cycle Time | T-States | Detection |
 |-----------|----------|-----------|-----------------|-----------------|----------|-----------|
@@ -451,11 +451,11 @@ Since a 0-bit has 1 complete cycle (2 half-cycles = 2 LONG intervals) and a 1-bi
 
 **Common WAV conversion settings**:
 
+The 43200 Hz sample rate divides evenly into both 1200 Hz and 2400 Hz frequencies, making it mathematically clean to generate the FSK waveforms. The 8-bit depth is sufficient since MSX only needs to detect zero-crossings rather than precise amplitude values.
+
 - Sample rate: 43200 Hz (how many times per second the audio is sampled)
 - Bit depth: 8-bit unsigned PCM (256 discrete amplitude levels per sample, 0-255)
 - Channels: Mono
-
-The 43200 Hz sample rate divides evenly into both 1200 Hz and 2400 Hz frequencies, making it mathematically clean to generate the FSK waveforms. The 8-bit depth is sufficient since MSX only needs to detect zero-crossings rather than precise amplitude values.
 
 **At 43200 Hz sample rate:**
 
@@ -581,7 +581,7 @@ To convert a CAS file to audio (WAV format), you need to parse the CAS structure
 - Subsequent `CAS HEADER`s → short silence + block sync
 - All block data (type markers, filenames, addresses, program bytes) are encoded as audio
 
-### 4.2 WAV to CAS Conversion (wav2cas algorithm)
+### 4.2 WAV to CAS Conversion:
 
 To convert audio (WAV format) back to a CAS file, you need to decode the audio pulses and reconstruct the CAS structure. This is the algorithm used by the wav2cas tool:
 
@@ -601,7 +601,7 @@ To convert audio (WAV format) back to a CAS file, you need to decode the audio p
 
 **Key points:**
 - When converting WAV→CAS: audio silence and sync sequences are NOT stored in the CAS file; instead a `CAS HEADER` delimiter is written
-- Uses adaptive pulse width tolerance (window factor ~1.5×) to handle tape speed variations
+- Uses adaptive pulse width tolerance to handle tape speed variations: accepts pulses within approximately ±50% of the expected duration to accommodate cassette motor speed fluctuations
 
 ### 4.3 Practical Limits
 
@@ -610,18 +610,6 @@ To convert audio (WAV format) back to a CAS file, you need to decode the audio p
 **Filename character support:** ASCII characters only. The format treats filenames as 6-byte ASCII arrays. Characters outside printable ASCII range may cause issues.
 
 **Block alignment:** Block data must be 8-byte aligned, which means `CAS HEADER`s (being 8 bytes) must be placed at 8-byte aligned offsets (0, 8, 16, 24, ...).
-
-When creating CAS files, data blocks are padded with:
-- **BINARY/BASIC files:** Zero bytes (0x00) for 8-byte alignment
-- **ASCII files:** `EOF` bytes (0x1A) for 256-byte alignment
-- **Custom blocks:** Zero bytes (0x00) for 8-byte alignment
-
-**Loading time at 1200 baud:**
-- 1 KB file: approximately 10 seconds
-- 16 KB file: approximately 2.5 minutes
-- These times include sync pulses and inter-block gaps
-
-**Memory constraints:** MSX systems typically have 8-64 KB of RAM, so most files are small by modern standards.
 
 **Basic File length:** For BASIC files: tokenized program data must be at least 2 bytes (minimal valid program)
 
