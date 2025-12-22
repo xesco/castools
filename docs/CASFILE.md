@@ -18,7 +18,6 @@ This document describes the CAS container format and MSX cassette tape encoding 
    - 3.2 [Bit Encoding](#32-bit-encoding)
    - 3.3 [Serial Framing](#33-serial-framing)
    - 3.4 [Sync and Silence](#34-sync-and-silence)
-   - 3.5 [Mapping CAS Structure to Audio Encoding](#35-mapping-cas-structure-to-audio-encoding)
 4. [Implementation Guide](#4-implementation-guide)
    - 4.1 [CAS to WAV Conversion](#41-cas-to-wav-conversion)
    - 4.2 [WAV to CAS Conversion (wav2cas algorithm)](#42-wav-to-cas-conversion-wav2cas-algorithm)
@@ -106,6 +105,8 @@ H  E  L  L  O  (space)
 
 **Putting It All Together**
 
+File header block identifying file type and name.
+
 ```
 Offset  Bytes  Content                                    Description
 ------  -----  -----------------------------------------  --------------------------
@@ -135,7 +136,7 @@ Total:  24 bytes (8-byte delimiter + 16 bytes of block data)
 
 ### 2.2 ASCII Files
 
-`ASCII` files have a flexible structure and can span multiple blocks. Unlike `BINARY` and `BASIC` files which always use exactly two blocks, `ASCII` files can have as many data blocks as needed to store their content.
+`ASCII` files are used to store plain text data. They have a flexible structure and can span multiple blocks. Unlike `BINARY` and `BASIC` files which always use exactly two blocks, `ASCII` files can have as many data blocks as needed to store their content.
 
 **End-of-File Detection:**
 
@@ -149,9 +150,9 @@ Total:  24 bytes (8-byte delimiter + 16 bytes of block data)
 - Data after the `0x1A` marker within the same file is ignored (padding, garbage data)
 - A `CAS HEADER` after the `EOF` marker may signal the start of a **new file** (not continuation of the current ASCII file)
 
-**Important limitation:** Because `0x1A` serves as the `EOF` marker, ASCII files cannot contain this byte as part of their actual content. This is only a restriction for `ASCII` files—`BINARY` and `BASIC` files can include `0x1A` as regular data since they don't use an `EOF` marker.
-
 **Putting it all together**
+
+ASCII text file with multi-block structure and EOF marker.
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -227,6 +228,7 @@ Both file types follow this pattern:
 **Data Block Format:**
 
 The data block begins with a 6-byte **data header** containing three 16-bit addresses (little-endian), followed by the program data:
+
 - **LOAD ADDRESS** (2 bytes): Memory address where data will be loaded
 - **END ADDRESS**  (2 bytes): Memory address marking the end of the data range
 - **EXEC ADDRESS** (2 bytes): Memory address where execution begins (for BLOAD with ,R)
@@ -246,17 +248,13 @@ Since `BINARY/BASIC` files always have exactly 2 blocks (file header + data bloc
 
 After the program data, there may be padding bytes (`0x00`) to maintain 8-byte alignment. Since the next `CAS HEADER` must start at an 8-byte aligned offset, zero-byte padding is added if the program data doesn't end at an 8-byte boundary. To find the next file, scan forward to locate the next `CAS HEADER` at an aligned offset.
 
-**No EOF Marker:**
-
-Since these are binary files, all byte values from `0x00` to `0xFF` are valid data. There's no special `EOF` marker like ASCII's `0x1A`—the addresses define exactly where the data ends.
-
 **File ID Bytes:**
 
-When BINARY and BASIC files are stored on disk (e.g., in MSX-DOS), they include a 1-byte file ID prefix:
+When `BINARY` and `BASIC` files are stored on disk (e.g., in MSX-DOS), they include a 1-byte file ID prefix:
 - **BINARY files:** `0xFE` prefix byte (not present in CAS format)
 - **BASIC files:**  `0xFF` prefix byte (not present in CAS format)
 
-These ID bytes are **NOT** stored in CAS files—they belong to the disk file format. When extracting BINARY files from CAS, tools typically add the `0xFE` prefix to match the disk format. When adding BINARY/BASIC files to a CAS, tools automatically strip these prefix bytes if present.
+These ID bytes are **NOT** stored in CAS files—they belong to the disk file format. When extracting `BINARY` files from CAS, tools typically add the `0xFE` prefix to match the disk format. When adding `BINARY/BASIC` files to a CAS, tools automatically strip these prefix bytes if present.
 
 **Example: Adding prefix when extracting BINARY file from CAS to disk**
 
@@ -293,16 +291,18 @@ CAS data block (prefix stripped):
 **Automatic Prefix Detection:**
 
 Tools can reliably detect and remove the prefix byte by checking the first byte of disk files:
-- If first byte is `0xFE` → BINARY file with prefix → skip first byte when adding to CAS
-- If first byte is `0xFF` → BASIC file with prefix → skip first byte when adding to CAS
+- If first byte is `0xFE` → `BINARY` file with prefix → skip first byte when adding to CAS
+- If first byte is `0xFF` → `BASIC` file with prefix → skip first byte when adding to CAS
 - Otherwise → Data starts immediately → use as-is
 
 This simple check is reliable because:
 1. MSX programs typically load at 0x8000-0xF000 range
-2. Load addresses starting with 0xFE/0xFF would mean loading at 0xFE00+ (BIOS area)
+2. Load addresses starting with 0xFE/0xFF would mean loading at 0xFE00+ (top of address space)
 3. Such high addresses are practically never used for program load addresses
 
 **Putting it all together**
+
+BINARY machine code file with address header and padding.
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -357,6 +357,8 @@ Offset: 0x0018
 - After reading 2nd block, file is complete → next `CAS HEADER`
   starts a NEW file (if present)
 
+BASIC tokenized program with address header.
+
 ```
 ┌────────────────────────────────────────────────────────────┐
 │ BASIC FILE: "GAME  " with tokenized BASIC program          │
@@ -394,6 +396,8 @@ Offset: 0x0018
 │                                                            │
 │ [BASIC PROGRAM: 282 bytes in tokenized format]             │
 │   (Internal tokenized format structure)                    │
+│ [NO PADDING NEEDED]                                        │
+│   (6 + 282 = 288 bytes = 36 × 8, already aligned)          │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -412,29 +416,46 @@ This section describes how MSX computers actually read and write cassette tapes.
 
 MSX uses Frequency Shift Keying (FSK) to convert digital bits into audio tones. Each bit value is represented by a specific frequency, allowing ordinary cassette recorders to store computer data.
 
-**Transmission:** Data is encoded as 1200 Hz or 2400 Hz tones  
-**Detection:** MSX reads the tape by measuring zero-crossing timing (see section 4.2)
-
-Supported baud rates: 1200 baud (default) or 2400 baud.
-
-**Common WAV conversion settings**:
-- Sample rate: 43200 Hz
-- Bit depth: 8-bit unsigned PCM  
-- Channels: Mono
-
-These parameters are commonly used for CAS-to-WAV conversion because 43200 Hz divides evenly into both 1200 Hz and 2400 Hz frequencies. Other settings can work as long as they accurately reproduce the FSK tones.
+Data is encoded as either 1200 Hz (0 bit) or 2400 Hz (1 bit) audio tones. The MSX reads the tape by measuring zero-crossing timing (the intervals when the audio signal crosses zero amplitude) rather than directly measuring frequencies. The system supports two baud rates: 1200 baud (default) or 2400 baud.
 
 ### 3.2 Bit Encoding
 
+MSX encodes binary data by representing each bit (0 or 1) as a specific audio waveform pattern. The key principle is that **0-bits and 1-bits take the same amount of time, but use different frequencies**:
+
+- **0-bit**: Encoded as 1 complete wave cycle at the lower frequency (1200 Hz)
+- **1-bit**: Encoded as 2 complete wave cycles at double the frequency (2400 Hz)
+
+This means a 1-bit has twice as many zero-crossings in the same time period as a 0-bit, allowing the MSX hardware to distinguish them by measuring the time between zero-crossings (longer intervals = 0, shorter intervals = 1).
+
 Each bit has a fixed time duration, but uses different frequencies (different numbers of wave cycles):
 
-**1200 baud** (each bit = 833.3 µs):
-- **0-bit:** 1 cycle at 1200 Hz (takes full 833.3 µs)
-- **1-bit:** 2 cycles at 2400 Hz (each cycle 416.7 µs, total 833.3 µs)
+| Baud Rate | Bit Type | Frequency | Full Cycle Time | Half-Cycle Time | T-States | Detection |
+|-----------|----------|-----------|-----------------|-----------------|----------|-----------|
+| 1200      | 0-bit    | 1200 Hz   | 833.3 µs        | 416.7 µs        | 1491     | `LONG`    |
+| 1200      | 1-bit    | 2400 Hz   | 833.3 µs        | 208.3 µs        | 746      | `SHORT`   |
+| 2400      | 0-bit    | 2400 Hz   | 416.7 µs        | 208.3 µs        | 746      | `LONG`    |
+| 2400      | 1-bit    | 4800 Hz   | 416.7 µs        | 104.2 µs        | 373      | `SHORT`   |
 
-**2400 baud** (each bit = 416.7 µs):  
-- **0-bit:** 1 cycle at 2400 Hz (takes full 416.7 µs)
-- **1-bit:** 2 cycles at 4800 Hz (each cycle 208.3 µs, total 416.7 µs)
+**MSX bit detection algorithm:**
+
+The MSX BIOS uses this zero-crossing timing method to decode bits from the cassette input signal. The process is **continuous**—the MSX repeatedly measures the time between consecutive zero-crossings:
+
+1. **Wait for zero crossing** - Detect when signal crosses zero
+2. **Start timer** - Begin counting CPU T-states (CPU cycles)
+3. **Wait for next zero crossing** - One half-cycle later
+4. **Stop timer** - End measurement
+5. **Compare with thresholds** - If time is `SHORT`, it's part of a 1-bit. If `LONG`, it's part of a 0-bit
+6. **Repeat** - Go back to step 1 to measure the next half-cycle
+
+Since a 0-bit has 1 complete cycle (2 half-cycles = 2 LONG intervals) and a 1-bit has 2 complete cycles (4 half-cycles = 4 SHORT intervals), the MSX accumulates these measurements to decode each complete bit. The serial framing (START bit, 8 data bits, 2 STOP bits) provides byte-level synchronization—the START bit signals the beginning of a new byte, allowing the MSX to group the measured intervals into the correct bit sequence.
+
+**Common WAV conversion settings**:
+
+- Sample rate: 43200 Hz (how many times per second the audio is sampled)
+- Bit depth: 8-bit unsigned PCM (256 discrete amplitude levels per sample, 0-255)
+- Channels: Mono
+
+The 43200 Hz sample rate divides evenly into both 1200 Hz and 2400 Hz frequencies, making it mathematically clean to generate the FSK waveforms. The 8-bit depth is sufficient since MSX only needs to detect zero-crossings rather than precise amplitude values.
 
 **At 43200 Hz sample rate:**
 
@@ -445,33 +466,13 @@ Each bit has a fixed time duration, but uses different frequencies (different nu
 | 2400      | 0-bit     | 1 × 2400 Hz | 18 samples        |
 | 2400      | 1-bit     | 2 × 4800 Hz | 18 samples (2×9)  |
 
-**How MSX hardware actually detects bits:**
-
-The MSX doesn't directly measure frequencies. Instead, it measures the time between zero crossings (when the signal crosses zero amplitude) by counting CPU T-states.
-
-**Zero crossing intervals at 1200 baud:**
-- 1200 Hz: half-cycle = 416.7 µs = 1491 T-states (`LONG` = 0-bit)
-- 2400 Hz: half-cycle = 208.3 µs = 746  T-states (`SHORT` = 1-bit)
-
-1. **Wait for zero crossing** - Detect when signal crosses zero
-2. **Start timer** - Begin counting CPU T-states (CPU cycles)
-3. **Wait for next zero crossing** - One half-cycle later
-4. **Stop timer** - End measurement
-5. **Compare with thresholds** - If time is `SHORT`, it's a 1-bit. If `LONG`, it's a 0-bit
-
-**Why different cycle counts:** The FSK encoding deliberately uses 1 cycle at 1200 Hz for 0-bits and 2 cycles at 2400 Hz for 1-bits. Both bit types take the same time duration (833.3 µs at 1200 baud), but 1-bits contain twice as many wave cycles at twice the frequency. The MSX detects which bit was sent by measuring the time between zero crossings—a longer interval indicates a 0-bit, while a shorter interval indicates a 1-bit.
-
-This timing-based method is more reliable than trying to measure exact frequencies, especially with tape speed variations and analog signal degradation.
-
 ### 3.3 Serial Framing
 
 Each byte is transmitted with start and stop bits, similar to RS-232 serial communication. This framing allows the receiving hardware to synchronize on byte boundaries.
 
-**Frame structure:** START (0-bit) + 8 DATA bits (LSB first) + 2 STOP (1-bits) = 11 bits/byte
+**Frame structure:** 
 
-Timing at 1200 baud: ~9.17 ms per byte (~109 bytes/sec)
-
-**Example: Transmitting byte 0x42 (ASCII 'B')**
+START (0-bit) + 8 DATA bits (LSB first) + 2 STOP (1-bits) = 11 bits/byte
 
 ```
 Byte value: 0x42 = 0100 0010 binary
@@ -488,24 +489,6 @@ Bit sequence at 1200 baud:
 └───────┴────┴────┴────┴────┴────┴────┴────┴────┴──────┴──────┘
 
 Total: 11 bits × 833.3 μs = 9.17 ms
-```
-
-**Example: Transmitting byte 0xFF (all bits set)**
-
-```
-Byte value: 0xFF = 1111 1111 binary
-
-Bit sequence:
-┌───────┬────┬────┬────┬────┬────┬────┬────┬────┬──────┬──────┐
-│ START │ D0 │ D1 │ D2 │ D3 │ D4 │ D5 │ D6 │ D7 │STOP1 │STOP2 │
-├───────┼────┼────┼────┼────┼────┼────┼────┼────┼──────┼──────┤
-│   0   │ 1  │ 1  │ 1  │ 1  │ 1  │ 1  │ 1  │ 1  │  1   │  1   │
-├───────┼────┼────┼────┼────┼────┼────┼────┼────┼──────┼──────┤
-│1×1200 │2×  │2×  │2×  │2×  │2×  │2×  │2×  │2×  │ 2×   │ 2×   │
-│  Hz   │2400│2400│2400│2400│2400│2400│2400│2400│ 2400 │ 2400 │
-└───────┴────┴────┴────┴────┴────┴────┴────┴────┴──────┴──────┘
-
-One 1200 Hz cycle for START, then twenty 2400 Hz cycles for the ten 1-bits.
 ```
 
 ### 3.4 Sync and Silence
@@ -570,44 +553,6 @@ File: BINARY "GAME" with 256 bytes of data
 
 Total audio duration: ~13 seconds for this small file
 ```
-
-### 3.5 Mapping CAS Structure to Audio Encoding
-
-This section shows how the logical CAS file structure (discussed in Section 2) maps to the physical audio encoding on tape:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ CAS FILE STRUCTURE          AUDIO ENCODING                  │
-├─────────────────────────────────────────────────────────────┤
-│ [CAS HEADER: 8 bytes]  →    [Long silence: 2 sec]           │
-│ (File header delimiter)     [Initial sync: 8000 1-bits]     │
-│                             [8 bytes encoded as audio]      │
-│                                                             │
-│ File header block:     →    [16 bytes encoded as audio:     │
-│   Type marker (10 B)          - Type marker (10 bytes)      │
-│   Filename (6 B)              - Filename (6 bytes)]         │
-├─────────────────────────────────────────────────────────────┤
-│ [CAS HEADER: 8 bytes]  →    [Short silence: 1 sec]          │
-│ (Data block delimiter)      [Block sync: 2000 1-bits]       │
-│                             [8 bytes encoded as audio]      │
-│                                                             │
-│ Data block:            →    [Data encoded as audio:         │
-│   (varies by type)            - Addresses (6 bytes)         │
-│                               - Program/text data           │
-│                               - Padding if needed]          │
-├─────────────────────────────────────────────────────────────┤
-│ [Next file...]         →    [Long silence: 2 sec]           │
-│                             [Initial sync: 8000 1-bits]     │
-│                             ...                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Key points:**
-- First block of each file gets long silence (2 sec) + initial sync (8000 1-bits) + data bytes
-- Subsequent blocks get short silence (1 sec) + block sync (2000 1-bits) + data bytes
-- All data bytes (type markers, filenames, addresses, program data, text) are encoded using FSK with serial framing (START + 8 data bits + 2 STOP bits)
-- The silence and sync are **not** stored in CAS files—they're added during WAV conversion or tape recording
-
 ---
 
 ## 4. Implementation Guide
@@ -656,10 +601,7 @@ To convert audio (WAV format) back to a CAS file, you need to decode the audio p
 
 **Key points:**
 - When converting WAV→CAS: audio silence and sync sequences are NOT stored in the CAS file; instead a `CAS HEADER` delimiter is written
-- When converting CAS→WAV: each `CAS HEADER` delimiter triggers generation of audio silence + sync sequence
 - Uses adaptive pulse width tolerance (window factor ~1.5×) to handle tape speed variations
-- Signal processing options: amplitude normalization, envelope correction (noise reduction), phase shifting
-- Configurable thresholds allow tuning for different tape quality and recording conditions
 
 ### 4.3 Practical Limits
 
