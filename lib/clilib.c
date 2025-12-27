@@ -29,6 +29,7 @@ void parseArguments(int argc, char* argv[], ProgramArgs *args)
   args->input_file = NULL;
   args->output_file = NULL;
   args->baudrate = BAUDRATE_STD;
+  args->output_frequency = OUTPUT_FREQUENCY;  /* Will be updated if baudrate changes */
   args->silence_time = LONG_SILENCE;
 
   /* Parse command line options */
@@ -38,6 +39,7 @@ void parseArguments(int argc, char* argv[], ProgramArgs *args)
       /* Process option flags */
       if (argv[i][1]=='2' && argv[i][2]=='\0') {
         args->baudrate = BAUDRATE_FAST;
+        args->output_frequency = OUTPUT_FREQUENCY * 2;  /* Double sample rate at 2400 baud */
       }
       else if (argv[i][1]=='s' && argv[i][2]=='\0') {
         /* Custom silence duration - requires next argument */
@@ -104,5 +106,5 @@ void loadAndPrepareFiles(const char *progname, ProgramArgs *args,
   }
 
   /* Initialize write buffer for efficient I/O */
-  initWriteBuffer(wb, *output, args->baudrate, OUTPUT_FREQUENCY);
+  initWriteBuffer(wb, *output, args->baudrate, args->output_frequency);
 }

@@ -70,9 +70,9 @@ static void init_sine_table(void)
 
   /* Generate 360 sine samples (1 complete cycle at 1-degree resolution) */
   for (int i = 0; i < 360; i++) {
-    /* sin(angle) * 127.0 + 128.0 converts [-1,1] to unsigned [1,255] */
+    /* sin(angle) * 127.5 + 127.5 converts [-1,1] to unsigned [0,255] (max amplitude) */
     double angle = 2.0 * M_PI * i / 360.0;
-    sine_table[i] = (unsigned char)(sin(angle) * 127.0 + 128.0);
+    sine_table[i] = (unsigned char)(sin(angle) * 127.5 + 127.5);
   }
   sine_table_initialized = 1;
 }

@@ -37,6 +37,9 @@ int main(int argc, char* argv[])
   size_t cas_size;     /* Size of CAS file */
   ProgramArgs args;
 
+  /* Parse command line arguments */
+  parseArguments(argc, argv, &args);
+
   /* Preset WAV header template (sizes updated at program end with actual data size) */
   WAVE_HEADER waveheader =
   {
@@ -47,16 +50,13 @@ int main(int argc, char* argv[])
     16,                   /* Format chunk size (16 bytes for PCM) */
     PCM_WAVE_FORMAT,      /* PCM format identifier */
     MONO,                 /* Single channel audio */
-    OUTPUT_FREQUENCY,     /* 43200 Hz sample rate */
-    OUTPUT_FREQUENCY,     /* Bytes per second = sample rate for 8-bit mono */
+    args.output_frequency, /* Sample rate (43200 Hz @ 1200 baud, 86400 Hz @ 2400 baud) */
+    args.output_frequency, /* Bytes per second = sample rate for 8-bit mono */
     1,                    /* Block alignment (1 byte per sample for 8-bit mono) */
     8,                    /* 8 bits per sample */
     { "data" },
     0                     /* Will be set to actual audio data size */
   };
-
-  /* Parse command line arguments */
-  parseArguments(argc, argv, &args);
 
   /* Load CAS file and prepare output */
   loadAndPrepareFiles(argv[0], &args, &cas, &cas_size, &output, &wb);

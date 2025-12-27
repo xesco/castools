@@ -10,6 +10,7 @@ typedef struct {
   char *input_file;     /* Input CAS filename */
   char *output_file;    /* Output WAV filename */
   int baudrate;         /* Baud rate: 1200 or 2400 */
+  int output_frequency; /* Sample rate (doubled at 2400 baud) */
   int silence_time;     /* Silence duration in samples (default: LONG_SILENCE) */
 } ProgramArgs;
 
